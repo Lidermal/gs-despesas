@@ -13,7 +13,6 @@ function formatarDataVisao(valor) {
   return s;
 }
 
-// Detecta data base do Sheets (1899-12-30/31) que aparece quando célula vazia está formatada como data
 function isDataBaseSheets(valor) {
   if (!valor) return true;
   try { const d = new Date(valor); if (isNaN(d.getTime())) return true; return d.getFullYear() === 1899 || d.getFullYear() === 1900; } catch (e) { return true; }
@@ -33,89 +32,111 @@ function chaveDataOrdenacao(valor) {
   const d = new Date(s); return isNaN(d.getTime()) ? new Date(0) : d;
 }
 
-// ==================== OCR: DATA / HORA / VALOR ====================
+// ==================== OCR: DATA / HORA / VALOR (MELHORADO) ====================
 function extrairDataDoTexto(texto) {
-  let t = String(texto || '').replace(/\s+/g, ' ');
-  const re = /(?:^|[^\d])(0[1-9]|[12]\d|3[01])[\/\-\.\,\s\|l1I\\]{1,3}(0[1-9]|1[012])[\/\-\.\,\s\|l1I\\]{1,3}(20\d{2}|\d{2})(?=[^\d]|$)/g;
-  let m;
-  while ((m = re.exec(t)) !== null) {
-    let d = parseInt(m[1], 10), mo = parseInt(m[2], 10), y = parseInt(m[3], 10);
-    if (m[3].length === 2) y = 2000 + y;
-    if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12 && y >= 2000 && y <= 2100) return `${pad2(d)}/${pad2(mo)}/${y}`;
-  }
-  const reIso = /(?:^|[^\d])(20\d{2})[\-\.\/](0[1-9]|1[012])[\-\.\/](0[1-9]|[12]\d|3[01])(?=[^\d]|$)/g;
-  if ((m = reIso.exec(t)) !== null) {
-    const y = +m[1], mo = +m[2], d = +m[3];
-    if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12) return `${pad2(d)}/${pad2(mo)}/${y}`;
+  if (!texto) return '';
+  let t = String(texto).toUpperCase();
+  const padroesData = [
+    /(\d{2})[\/\-\.](\d{2})[\/\-\.](\d{4})/g,
+    /(\d{2})[\/\-\.](\d{2})[\/\-\.](\d{2})/g,
+    /DATA[:\s]+(\d{2}[\/\-\.]\d{2}[\/\-\.]\d{2,4})/gi,
+    /(\d{2}) DE (JANEIRO|FEVEREIRO|MARÇO|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO) DE (\d{4})/gi
+  ];
+  const meses = { 'JANEIRO': '01', 'FEVEREIRO': '02', 'MARÇO': '03', 'ABRIL': '04', 'MAIO': '05', 'JUNHO': '06', 'JULHO': '07', 'AGOSTO': '08', 'SETEMBRO': '09', 'OUTUBRO': '10', 'NOVEMBRO': '11', 'DEZEMBRO': '12' };
+  for (let padrao of padroesData) {
+    padrao.lastIndex = 0;
+    let match;
+    while ((match = padrao.exec(t)) !== null) {
+      let dia, mes, ano;
+      if (match[0].includes(' DE ')) { dia = pad2(parseInt(match[1])); mes = meses[match[2].toUpperCase()]; ano = match[3]; }
+      else { dia = match[1]; mes = match[2]; ano = match[3].length === 2 ? '20' + match[3] : match[3]; }
+      if (parseInt(dia) >= 1 && parseInt(dia) <= 31 && parseInt(mes) >= 1 && parseInt(mes) <= 12 && parseInt(ano) >= 2000 && parseInt(ano) <= 2100) return `${dia}/${mes}/${ano}`;
+    }
   }
   return '';
 }
 
 function extrairHoraDoTexto(texto) {
-  let t = String(texto || '').replace(/\s+/g, ' ');
-  const re = /(?:^|[^\d])([01]?\d|2[0-3])\s*[:;hH\.\-]\s*([0-5]\d)(?=[^\d]|$)/g;
-  const m = re.exec(t);
-  return m ? `${pad2(parseInt(m[1], 10))}:${m[2]}` : '';
+  if (!texto) return '';
+  let t = String(texto);
+  const padroesHora = [/(\d{2})[:hH](\d{2})/, /HORA[:\s]+(\d{2}[:hH]\d{2})/gi, /(\d{1,2})[:hH](\d{2})[:hH](\d{2})/];
+  for (let padrao of padroesHora) {
+    padrao.lastIndex = 0;
+    let match = padrao.exec(t);
+    if (match) {
+      let hora = pad2(parseInt(match[1]));
+      let min = match[2];
+      if (parseInt(hora) >= 0 && parseInt(hora) <= 23 && parseInt(min) >= 0 && parseInt(min) <= 59) return `${hora}:${min}`;
+    }
+  }
+  return '';
 }
 
 function extrairValorDoTexto(texto) {
-  let t = String(texto || '').toUpperCase().replace(/\n/g, ' ');
-  t = t.replace(/(\d+)\s*[.,]\s*(\d{2})(?=[^\d]|$)/g, '$1,$2');
-  t = t.replace(/(\d[,.])O(\d)/g, '$10$2').replace(/(\d[,.])\dO/g, '$1$20').replace(/(\d[,.])OO/g, '$100');
+  if (!texto) return '';
+  let t = String(texto).toUpperCase();
+  t = t.replace(/\s+/g, ' ');
   t = t.replace(/(R\$|RS|\$)\s*(\d+)[\)\]\}]+/g, '$1 $2');
 
-  const regexMoeda = /(?:R\$\s*|RS\s*|\$\s*)?(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]?\d*)(?=[^\d]|$)/g;
-  let m, valores = [];
-
-  while ((m = regexMoeda.exec(t)) !== null) {
-    let stringNum = m[1];
-    let temRealAntes = false;
-    const antes = t.substring(Math.max(0, m.index - 10), m.index);
-    if (/R\$|RS|\$\s*$/.test(antes)) temRealAntes = true;
-
-    let num = null;
-    if (stringNum.includes(',') || stringNum.includes('.')) {
-      const clean = stringNum.replace(/[^\d.,]/g, '');
-      const lastSep = Math.max(clean.lastIndexOf(','), clean.lastIndexOf('.'));
-      const intPart = clean.substring(0, lastSep).replace(/[.,]/g, '');
-      const decPart = clean.substring(lastSep + 1);
-      num = parseFloat((intPart || '0') + '.' + decPart);
-    } else {
-      if (temRealAntes) {
-        if (stringNum.length >= 3) {
-          const intPart = stringNum.slice(0, -2);
-          const decPart = stringNum.slice(-2);
-          num = parseFloat(intPart + '.' + decPart);
-        } else {
-          num = parseFloat(stringNum);
-        }
-      } else { continue; }
+  // Estratégia 1: busca por palavras-chave fortes
+  const padroesValor = [
+    /VALOR\s*PAGO[:\s]*R?\$?\s*([\d.]+,\d{2})/gi,
+    /TOTAL\s*(?:DA\s*COMPRA|A\s*PAGAR|PAGO)?[:\s]*R?\$?\s*([\d.]+,\d{2})/gi,
+    /PAGO[:\s]*R?\$?\s*([\d.]+,\d{2})/gi,
+    /CREDITO\s*(?:A\s*VISTA|A\s*PRAZO)?[:\s]*[\w\s]*?R?\$?\s*([\d.]+,\d{2})/gi,
+    /DEBITO\s*(?:A\s*VISTA)?[:\s]*[\w\s]*?R?\$?\s*([\d.]+,\d{2})/gi,
+    /R\$\s*([\d.]+,\d{2})/g,
+    /([\d.]+,\d{2})\s*REAL/gi,
+  ];
+  for (let padrao of padroesValor) {
+    padrao.lastIndex = 0;
+    let match = padrao.exec(t);
+    if (match) {
+      let valorStr = match[1].replace(/\./g, '').replace(',', '.');
+      let valor = parseFloat(valorStr);
+      if (valor > 0.50 && valor < 50000) return valor.toFixed(2);
     }
-    if (num !== null && num > 0.01 && num < 50000) valores.push({ original: m[0], num, index: m.index, temReal: temRealAntes });
   }
 
-  if (valores.length === 0) return '';
-  const palavrasChave = [
-    { regex: /VALOR\s*PAGO/g, peso: 200 }, { regex: /PAGO\s*:/g, peso: 190 }, { regex: /TOTAL\s*PAGO/g, peso: 190 },
-    { regex: /TOTAL\s*DA\s*COMPRA/g, peso: 180 }, { regex: /TOTAL\s*A\s*PAGAR/g, peso: 180 }, { regex: /TOTAL\s*:/g, peso: 170 },
-    { regex: /TOTAIS/g, peso: 160 }, { regex: /CREDITO\s*A\s*VISTA/g, peso: 160 }, { regex: /DEBITO\s*A\s*VISTA/g, peso: 150 },
-    { regex: /CARTAO\s*CREDITO/g, peso: 150 }, { regex: /CARTAO\s*DEBITO/g, peso: 140 }, { regex: /CREDITO/g, peso: 140 },
-    { regex: /DEBITO/g, peso: 130 }, { regex: /PIX/g, peso: 140 }, { regex: /DINHEIRO/g, peso: 130 },
-    { regex: /TOMBAMENTO/g, peso: 120 }, { regex: /VALOR\s*:/g, peso: 110 }, { regex: /VALOR/g, peso: 100 }
-  ];
+  // Estratégia 2: busca R$ seguido de número SEM vírgula (ex: R$6600 → 66,00)
+  const reRealSemVirgula = /R\$\s*(\d{3,})/g;
+  let matchReal;
+  while ((matchReal = reRealSemVirgula.exec(t)) !== null) {
+    const numStr = matchReal[1];
+    if (numStr.length >= 3) {
+      const intPart = numStr.slice(0, -2);
+      const decPart = numStr.slice(-2);
+      const valor = parseFloat(intPart + '.' + decPart);
+      if (valor > 0.50 && valor < 50000) return valor.toFixed(2);
+    }
+  }
 
-  let bestNum = 0, maxScore = -1;
-  valores.forEach(v => {
-    let score = 0;
-    if (v.temReal) score += 40;
-    if (v.original.includes('TOTAL')) score += 30;
-    const inicio = Math.max(0, v.index - 100);
-    const janela = t.substring(inicio, v.index);
-    palavrasChave.forEach(pc => { pc.regex.lastIndex = 0; if (pc.regex.test(janela)) score += pc.peso; });
-    score += (v.num / 1000);
-    if (score > maxScore) { maxScore = score; bestNum = v.num; }
-  });
-  return bestNum > 0 ? bestNum.toFixed(2) : '';
+  // Estratégia 3: busca palavras-chave próximas a qualquer número
+  const palavrasChave = ['TOTAL', 'PAGO', 'VALOR', 'CREDITO', 'DEBITO', 'PIX', 'DINHEIRO', 'TOMBAMENTO'];
+  for (let palavra of palavrasChave) {
+    let index = t.indexOf(palavra);
+    if (index !== -1) {
+      let trecho = t.substring(index, index + 80);
+      let matchValor = /R?\$?\s*([\d.]+,\d{2})/.exec(trecho);
+      if (matchValor) {
+        let valorStr = matchValor[1].replace(/\./g, '').replace(',', '.');
+        let valor = parseFloat(valorStr);
+        if (valor > 0.50 && valor < 50000) return valor.toFixed(2);
+      }
+    }
+  }
+
+  // Estratégia 4: maior valor com centavos no texto
+  let todosValores = t.match(/[\d.]+,\d{2}/g) || [];
+  let maiorValor = 0;
+  for (let valorStr of todosValores) {
+    let valorLimpo = valorStr.replace(/\./g, '').replace(',', '.');
+    let valor = parseFloat(valorLimpo);
+    if (valor > maiorValor && valor < 50000) maiorValor = valor;
+  }
+  if (maiorValor > 0) return maiorValor.toFixed(2);
+
+  return '';
 }
 
 // ==================== DRIVE / COMPRUVANTE ====================
@@ -174,7 +195,7 @@ function logout() {
   document.getElementById('viagemDetalheView').classList.add('hidden'); document.getElementById('authView').classList.remove('hidden');
 }
 
-// ==================== TOAST & MODAL ====================
+// ==================== TOAST ====================
 function showToast(message, type = 'info', title = null, duration = 4000) {
   const container = document.getElementById('toastContainer'); if (!container) return;
   const toast = document.createElement('div'); toast.className = `toast toast-${type}`; toast.setAttribute('role', 'alert');
@@ -183,9 +204,11 @@ function showToast(message, type = 'info', title = null, duration = 4000) {
   toast.innerHTML = `<div class="toast-icon"><i class="fa-solid ${icons[type] || icons.info}"></i></div><div class="toast-content"><div class="toast-title">${title || titles[type] || titles.info}</div><div class="toast-message">${String(message || '')}</div></div><button class="toast-close" aria-label="Fechar"><i class="fa-solid fa-xmark"></i></button><div class="toast-progress" style="animation-duration:${duration}ms"></div>`;
   container.appendChild(toast);
   const fechar = () => { if (toast.dataset.closing) return; toast.dataset.closing = '1'; toast.classList.add('hiding'); setTimeout(() => toast.remove(), 300); };
-  toast.querySelector('.toast-close').addEventListener('click', fechar); setTimeout(fechar, duration);
+  toast.querySelector('.toast-close').addEventListener('click', fechar);
+  setTimeout(fechar, duration);
 }
 
+// ==================== MODAL CONFIRMAÇÃO (COM ESTILOS INLINE) ====================
 function showConfirm(message, options = {}) {
   return new Promise((resolve) => {
     const existing = document.querySelector('.modal-overlay'); if (existing) existing.remove();
@@ -436,7 +459,7 @@ async function salvarNotaNaCarteira() {
   const r = await fetchAPI(data, 'btnSalvarNota');
   if (r && r.success) {
     document.getElementById('modalOCR').classList.add('hidden');
-    if (r.urlComprovante) showToast('✅ Comprovante e FOTO salvos! Coordenação/Gerência poderá visualizar.', 'success');
+    if (r.urlComprovante) showToast('✅ Comprovante e FOTO salvos!', 'success');
     else showToast('Salvo, mas sem anexo no Drive.', 'warning');
     ocrImagemBase64 = ''; ocrMimeType = 'image/jpeg'; ocrTextoExtraido = '';
     carregarCarteiraSuporte();
