@@ -290,7 +290,7 @@
     <div id="modalOCR" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center fade-in">
         <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-lg border-t-4 border-amber-500 max-h-[90vh] overflow-y-auto custom-scrollbar">
             <h3 class="text-lg font-bold text-slate-800 mb-2"><i class="fa-solid fa-camera text-amber-500 mr-2"></i> Leitura de Nota / Cupom (OCR)</h3>
-            <p class="text-xs text-slate-500 mb-4">Envie ou tire a foto. <b>Data, hora e valor</b> são lidos automaticamente do documento; <b>Categoria e Loja</b> você preenche manualmente.</p>
+            <p class="text-xs text-slate-500 mb-4">Envie ou tire a foto. <b>Data, hora e valor pago</b> são lidos automaticamente do documento (picote de máquina ou recibo); <b>Categoria e Loja</b> você preenche manualmente.</p>
 
             <input type="file" id="fileOCR" accept="image/*" class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100 mb-4" onchange="processarOCR(event)">
 
@@ -316,7 +316,7 @@
                 </div>
                 <div class="grid grid-cols-2 gap-3">
                     <div>
-                        <label class="block text-[10px] font-bold text-slate-500 mb-1">VALOR TOTAL (R$) <span class="text-emerald-600">(lido da foto)</span></label>
+                        <label class="block text-[10px] font-bold text-slate-500 mb-1">VALOR PAGO (R$) <span class="text-emerald-600">(lido da foto)</span></label>
                         <input type="number" step="0.01" id="ocrValor" placeholder="Ex: 35.50" class="w-full px-3 py-2 text-sm border rounded bg-slate-50">
                     </div>
                     <div>
