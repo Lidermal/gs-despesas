@@ -8,9 +8,167 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="style.css">
-    
+
     <!-- Tesseract.js para leitura OCR das Notas Fiscais e Cupons -->
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+    <!-- ============ ESTILO DOS ALERTAS (TOAST) ============ -->
+    <!-- Fica DEPOIS do style.css para garantir a sobrescrita/visual correto -->
+    <style>
+        #toastContainer {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            width: calc(100% - 32px);
+            max-width: 360px;
+            pointer-events: none;
+        }
+
+        .toast {
+            pointer-events: auto;
+            position: relative;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 14px 16px 16px 16px;
+            border-radius: 12px;
+            background: #ffffff;
+            color: #1e293b;
+            border: 1px solid #e2e8f0;
+            border-left: 5px solid #64748b;
+            box-shadow: 0 10px 25px -5px rgba(15, 23, 42, .25), 0 8px 10px -6px rgba(15, 23, 42, .12);
+            overflow: hidden;
+            animation: toastSlideIn .32s cubic-bezier(.21, 1.02, .73, 1);
+            font-family: inherit;
+        }
+
+        .toast.hiding {
+            animation: toastSlideOut .28s ease-in forwards;
+        }
+
+        .toast-icon {
+            font-size: 18px;
+            line-height: 1;
+            margin-top: 1px;
+            flex-shrink: 0;
+            color: #64748b;
+        }
+
+        .toast-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .toast-title {
+            font-weight: 800;
+            font-size: 13px;
+            letter-spacing: .01em;
+            margin-bottom: 2px;
+            color: #0f172a;
+        }
+
+        .toast-message {
+            font-size: 12px;
+            line-height: 1.45;
+            color: #475569;
+            word-wrap: break-word;
+            overflow-wrap: anywhere;
+        }
+
+        .toast-close {
+            flex-shrink: 0;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            color: #94a3b8;
+            font-size: 13px;
+            padding: 4px;
+            margin: -2px -4px 0 0;
+            border-radius: 8px;
+            line-height: 1;
+            transition: background .2s, color .2s;
+        }
+
+        .toast-close:hover {
+            background: #f1f5f9;
+            color: #334155;
+        }
+
+        .toast-progress {
+            position: absolute;
+            left: 0;
+            bottom: 0;
+            height: 3px;
+            width: 100%;
+            transform-origin: left center;
+            background: #94a3b8;
+            opacity: .35;
+            animation-name: toastProgress;
+            animation-timing-function: linear;
+            animation-fill-mode: forwards;
+        }
+
+        /* ---- Variantes por tipo ---- */
+        .toast-success { border-left-color: #059669; }
+        .toast-success .toast-icon { color: #059669; }
+        .toast-success .toast-title { color: #047857; }
+        .toast-success .toast-progress { background: #059669; }
+
+        .toast-error { border-left-color: #dc2626; }
+        .toast-error .toast-icon { color: #dc2626; }
+        .toast-error .toast-title { color: #b91c1c; }
+        .toast-error .toast-progress { background: #dc2626; }
+
+        .toast-warning { border-left-color: #d97706; }
+        .toast-warning .toast-icon { color: #d97706; }
+        .toast-warning .toast-title { color: #b45309; }
+        .toast-warning .toast-progress { background: #d97706; }
+
+        .toast-info { border-left-color: #2563eb; }
+        .toast-info .toast-icon { color: #2563eb; }
+        .toast-info .toast-title { color: #1d4ed8; }
+        .toast-info .toast-progress { background: #2563eb; }
+
+        @keyframes toastSlideIn {
+            from { transform: translateX(120%); opacity: 0; }
+            to   { transform: translateX(0);    opacity: 1; }
+        }
+
+        @keyframes toastSlideOut {
+            from { transform: translateX(0);    opacity: 1; }
+            to   { transform: translateX(120%); opacity: 0; }
+        }
+
+        @keyframes toastProgress {
+            from { transform: scaleX(1); }
+            to   { transform: scaleX(0); }
+        }
+
+        @media (max-width: 480px) {
+            #toastContainer {
+                top: 12px;
+                left: 12px;
+                right: 12px;
+                width: auto;
+                max-width: none;
+            }
+            .toast { animation-name: toastSlideInMobile; }
+            .toast.hiding { animation-name: toastSlideOutMobile; }
+        }
+
+        @keyframes toastSlideInMobile {
+            from { transform: translateY(-120%); opacity: 0; }
+            to   { transform: translateY(0);     opacity: 1; }
+        }
+        @keyframes toastSlideOutMobile {
+            from { transform: translateY(0);     opacity: 1; }
+            to   { transform: translateY(-120%); opacity: 0; }
+        }
+    </style>
 </head>
 <body class="bg-slate-100 min-h-screen font-sans text-slate-800">
 
@@ -20,7 +178,7 @@
     <div id="authView" class="flex items-center justify-center min-h-screen bg-slate-900 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]">
         <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md border-t-4 border-emerald-600 relative">
             <div class="flex justify-center mb-6"><img src="logo.png" alt="Logo" class="h-16 drop-shadow-md"></div>
-            
+
             <!-- LOGIN -->
             <div id="loginSection">
                 <h2 class="text-xl font-bold text-slate-800 text-center mb-1 uppercase tracking-wider">Gestão de Despesas</h2>
@@ -37,7 +195,7 @@
                     <button type="submit" id="btnLogin" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded mt-4 shadow-lg shadow-emerald-600/30 transition">
                         <span id="loginText">Acessar Despesas <i class="fa-solid fa-arrow-right-to-bracket ml-2"></i></span>
                     </button>
-                    
+
                     <div class="flex justify-between items-center mt-4 text-xs">
                         <button type="button" onclick="toggleAuthView('register')" class="text-slate-500 hover:text-emerald-600 font-semibold"><i class="fa-solid fa-user-plus mr-1"></i> Criar Conta</button>
                         <button type="button" onclick="abrirModalRecuperar()" class="text-emerald-600 hover:text-emerald-800 font-semibold underline">Esqueci minha senha</button>
@@ -99,7 +257,7 @@
 
     <!-- ==================== DASHBOARD PRINCIPAL ==================== -->
     <main id="mainContent" class="hidden min-h-screen container mx-auto p-4 py-8">
-        
+
         <!-- HEADER DO PAINEL -->
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 border-b border-slate-300 pb-4 gap-4">
             <div>
@@ -109,13 +267,13 @@
             <div id="dashActionButtons" class="flex gap-2 flex-wrap"></div>
         </div>
 
-        <!-- FILTROS POR LOJA (EXIBIÇÃO ARQUIVADA/ORGANIZADA POR SIGLA) -->
+        <!-- FILTROS POR LOJA -->
         <div class="mb-6 flex gap-2 overflow-x-auto pb-2 custom-scrollbar" id="filtroSiglasLojas"></div>
 
         <!-- GRID DE VIAGENS -->
         <div id="gridViagens" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 fade-in"></div>
 
-        <!-- SEÇÃO DA CARTEIRA TEMPORÁRIA DO SUPORTE (SEPARADA) -->
+        <!-- SEÇÃO DA CARTEIRA TEMPORÁRIA DO SUPORTE -->
         <div id="secaoCarteiraSuporte" class="mt-12 hidden fade-in bg-white rounded-xl shadow-sm border p-6">
             <div class="flex justify-between items-center mb-6">
                 <div>
@@ -143,12 +301,12 @@
         </div>
     </main>
 
-    <!-- ==================== TELA DE PRESTAÇÃO DE CONTAS / DETALHES DA VIAGEM ==================== -->
+    <!-- ==================== TELA DE DETALHES DA VIAGEM ==================== -->
     <div id="viagemDetalheView" class="hidden min-h-screen container mx-auto p-4 py-8 fade-in">
         <button onclick="voltarDashboard()" class="text-emerald-600 hover:text-emerald-800 text-sm font-bold mb-4 flex items-center transition">
             <i class="fa-solid fa-arrow-left mr-1"></i> Voltar ao Painel
         </button>
-        
+
         <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
             <div class="bg-slate-900 text-white px-6 py-4 flex flex-col md:flex-row justify-between md:items-center gap-4">
                 <div>
@@ -160,11 +318,10 @@
             </div>
 
             <div class="p-6">
-                <!-- BARRAS DE AÇÕES DINÂMICAS -->
                 <div id="painelAcoesViagem" class="mb-6 flex flex-wrap gap-3 items-center justify-between border-b pb-4"></div>
 
                 <h3 class="text-sm font-bold text-slate-700 uppercase mb-3"><i class="fa-solid fa-receipt text-slate-400 mr-2"></i> Despesas Lançadas nesta Viagem (Ordem Cronológica)</h3>
-                
+
                 <div class="overflow-auto custom-scrollbar border rounded">
                     <table class="min-w-full text-sm text-left">
                         <thead class="bg-slate-100 border-b">
@@ -193,9 +350,9 @@
         </div>
     </div>
 
-    <!-- ==================== MODAIS DO SISTEMA ==================== -->
+    <!-- ==================== MODAIS ==================== -->
 
-    <!-- 1. MODAL DE CRIAR VIAGEM (COORDENAÇÃO / GERÊNCIA) -->
+    <!-- 1. MODAL CRIAR VIAGEM -->
     <div id="modalCriarViagem" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center fade-in">
         <div class="bg-white p-6 rounded-xl shadow-xl w-96 border-t-4 border-emerald-600">
             <h3 class="text-lg font-bold text-slate-800 mb-4"><i class="fa-solid fa-route text-emerald-600 mr-2"></i> Gerar Número de Viagem</h3>
@@ -220,19 +377,19 @@
         </div>
     </div>
 
-    <!-- 2. MODAL OCR / TIRAR FOTO DA NOTA (SUPORTE) -->
+    <!-- 2. MODAL OCR / FOTO -->
     <div id="modalOCR" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center fade-in">
         <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-lg border-t-4 border-amber-500 max-h-[90vh] overflow-y-auto custom-scrollbar">
             <h3 class="text-lg font-bold text-slate-800 mb-2"><i class="fa-solid fa-camera text-amber-500 mr-2"></i> Leitura de Nota / Cupom (OCR)</h3>
             <p class="text-xs text-slate-500 mb-4">Envie ou tire a foto do comprovante fiscal ou não fiscal.</p>
-            
+
             <input type="file" id="fileOCR" accept="image/*" class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100 mb-4" onchange="processarOCR(event)">
 
             <div id="ocrPreviewContainer" class="hidden mb-4 text-center bg-slate-50 border rounded p-2">
                 <img id="ocrPreview" class="max-h-56 mx-auto rounded shadow-sm" alt="Pré-visualização do comprovante">
                 <p class="text-[10px] text-slate-500 mt-2">Esta imagem será enviada ao Google Drive ao salvar.</p>
             </div>
-            
+
             <div id="ocrLoader" class="hidden text-center py-6 text-amber-600 font-bold text-sm">
                 <i class="fa-solid fa-spinner fa-spin text-2xl block mb-2"></i> Lendo e transcrevendo dados da nota...
             </div>
@@ -282,14 +439,12 @@
         </div>
     </div>
 
-    <!-- 3. MODAL ANEXAR TICKETS DA CARTEIRA À VIAGEM -->
+    <!-- 3. MODAL ANEXAR TICKETS -->
     <div id="modalAnexarTickets" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center fade-in">
         <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-md border-t-4 border-blue-600">
             <h3 class="text-lg font-bold text-slate-800 mb-2"><i class="fa-solid fa-paperclip text-blue-600 mr-2"></i> Inserir Tickets Guardados</h3>
             <p class="text-xs text-slate-500 mb-4">Selecione os comprovantes salvos na sua carteira para vincular a esta viagem:</p>
-            
             <div id="listaTicketsDisponiveis" class="max-h-60 overflow-y-auto custom-scrollbar border rounded p-2 bg-slate-50 space-y-2 mb-4"></div>
-
             <div class="flex justify-end gap-2">
                 <button onclick="document.getElementById('modalAnexarTickets').classList.add('hidden')" class="px-4 py-2 text-sm font-bold text-slate-500">Cancelar</button>
                 <button onclick="confirmarAnexoTickets()" id="btnConfirmarAnexos" class="px-4 py-2 text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white rounded">Anexar Selecionados</button>
