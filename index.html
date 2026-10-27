@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Despesas de Viagens | TI Claudino S/A</title>
+    <link rel="icon" type="image/png" href="logo.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- Tesseract.js para leitura OCR das Notas Fiscais e Cupons -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+</head>
+<body class="bg-slate-100 min-h-screen font-sans text-slate-800">
+
+    <div id="toastContainer"></div>
+
+    <!-- ==================== TELA DE AUTENTICAÇÃO ==================== -->
+    <div id="authView" class="flex items-center justify-center min-h-screen bg-slate-900 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]">
+        <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md border-t-4 border-emerald-600 relative">
+            <div class="flex justify-center mb-6"><img src="logo.png" alt="Logo" class="h-16 drop-shadow-md"></div>
+            
+            <!-- LOGIN -->
+            <div id="loginSection">
+                <h2 class="text-xl font-bold text-slate-800 text-center mb-1 uppercase tracking-wider">Gestão de Despesas</h2>
+                <p class="text-xs text-slate-500 text-center mb-6">Acesse com suas credenciais de TI</p>
+                <form id="loginForm" class="space-y-4">
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400"><i class="fa-solid fa-user"></i></span>
+                        <input type="text" id="loginUser" required placeholder="nome.sobrenome" class="block w-full pl-10 pr-3 py-2.5 border rounded focus:ring-2 focus:ring-emerald-500 lowercase bg-slate-50 text-sm">
+                    </div>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400"><i class="fa-solid fa-key"></i></span>
+                        <input type="password" id="loginSenha" required placeholder="Senha" class="block w-full pl-10 pr-3 py-2.5 border rounded focus:ring-2 focus:ring-emerald-500 bg-slate-50 text-sm">
+                    </div>
+                    <button type="submit" id="btnLogin" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded mt-4 shadow-lg shadow-emerald-600/30 transition">
+                        <span id="loginText">Acessar Despesas <i class="fa-solid fa-arrow-right-to-bracket ml-2"></i></span>
+                    </button>
+                    
+                    <div class="flex justify-between items-center mt-4 text-xs">
+                        <button type="button" onclick="toggleAuthView('register')" class="text-slate-500 hover:text-emerald-600 font-semibold"><i class="fa-solid fa-user-plus mr-1"></i> Criar Conta</button>
+                        <button type="button" onclick="abrirModalRecuperar()" class="text-emerald-600 hover:text-emerald-800 font-semibold underline">Esqueci minha senha</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- REGISTRO -->
+            <div id="registerSection" class="hidden">
+                <h2 class="text-xl font-bold text-slate-800 text-center mb-6 uppercase tracking-wider"><i class="fa-solid fa-id-card text-slate-400 mr-2"></i> Novo Usuário</h2>
+                <form id="registerForm" class="space-y-3">
+                    <div class="grid grid-cols-2 gap-3">
+                        <input type="text" id="regNome" required placeholder="Nome" class="w-full px-3 py-2 text-sm border rounded bg-slate-50">
+                        <input type="text" id="regSobrenome" required placeholder="Sobrenome" class="w-full px-3 py-2 text-sm border rounded bg-slate-50">
+                    </div>
+                    <select id="regEquipe" required class="w-full px-3 py-2 text-sm border rounded bg-slate-50">
+                        <option value="">Selecione Equipe...</option>
+                        <option value="Anna">Equipe Anna</option>
+                        <option value="Didi">Equipe Didi</option>
+                    </select>
+                    <select id="regNivel" required class="w-full px-3 py-2 text-sm border rounded bg-slate-50">
+                        <option value="">Selecione Perfil...</option>
+                        <option value="Suporte NN">Suporte NN</option>
+                        <option value="Suporte N1">Suporte N1</option>
+                        <option value="Suporte N2">Suporte N2</option>
+                        <option value="Suporte N3">Suporte N3</option>
+                        <option value="Coordenação GS">Coordenação GS</option>
+                        <option value="Gerência GS">Gerência GS</option>
+                    </select>
+                    <input type="password" id="regSenha" required placeholder="Crie uma Senha" class="w-full px-3 py-2 text-sm border rounded bg-slate-50">
+                    <button type="submit" id="btnRegister" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-2 rounded mt-4">
+                        <span id="regText"><i class="fa-solid fa-save mr-2"></i> Cadastrar</span>
+                    </button>
+                </form>
+                <div class="mt-4 pt-4 border-t text-center"><button onclick="toggleAuthView('login')" class="text-slate-500 font-semibold text-sm">Voltar ao Login</button></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== HEADER GLOBAL ==================== -->
+    <header id="globalHeader" class="bg-slate-900 border-b border-slate-700 sticky top-0 z-40 hidden">
+        <div class="container mx-auto px-4 h-16 flex justify-between items-center">
+            <div class="flex items-center gap-4 cursor-pointer" onclick="recarregarDashboard()">
+                <img src="logo.png" alt="Logo" class="h-10 bg-white rounded-md p-1">
+                <div>
+                    <h1 class="text-white font-bold text-base leading-tight">Despesas de Viagens</h1>
+                    <p class="text-[10px] text-emerald-400 font-semibold">TI Claudino S/A</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-4">
+                <div class="text-right hidden md:block">
+                    <p class="text-sm font-medium text-white" id="navUserName"></p>
+                    <p class="text-xs text-emerald-400 font-bold" id="navUserRole"></p>
+                </div>
+                <button onclick="logout()" class="text-slate-400 hover:text-red-400 font-semibold text-sm transition"><i class="fa-solid fa-power-off mr-1"></i> Sair</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- ==================== DASHBOARD PRINCIPAL ==================== -->
+    <main id="mainContent" class="hidden min-h-screen container mx-auto p-4 py-8">
+        
+        <!-- HEADER DO PAINEL -->
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 border-b border-slate-300 pb-4 gap-4">
+            <div>
+                <h2 class="text-2xl font-bold text-slate-800" id="dashTitle"><i class="fa-solid fa-plane-departure text-emerald-600 mr-2"></i> Painel de Viagens</h2>
+                <p class="text-sm text-slate-500 mt-1" id="dashSubtitle"></p>
+            </div>
+            <div id="dashActionButtons" class="flex gap-2 flex-wrap"></div>
+        </div>
+
+        <!-- FILTROS POR LOJA (EXIBIÇÃO ARQUIVADA/ORGANIZADA POR SIGLA) -->
+        <div class="mb-6 flex gap-2 overflow-x-auto pb-2 custom-scrollbar" id="filtroSiglasLojas"></div>
+
+        <!-- GRID DE VIAGENS -->
+        <div id="gridViagens" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 fade-in"></div>
+
+        <!-- SEÇÃO DA CARTEIRA TEMPORÁRIA DO SUPORTE (SEPARADA) -->
+        <div id="secaoCarteiraSuporte" class="mt-12 hidden fade-in bg-white rounded-xl shadow-sm border p-6">
+            <div class="flex justify-between items-center mb-6">
+                <div>
+                    <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-wallet text-amber-500 mr-2"></i> Carteira Temporária de Comprovantes (Guardados até 30 dias)</h3>
+                    <p class="text-xs text-slate-500">Suba as fotos dos seus cupons/notas antes ou durante a viagem. Após 30 dias, registros não vinculados são apagados automaticamente.</p>
+                </div>
+                <button onclick="abrirModalOCR()" class="bg-amber-500 hover:bg-amber-600 text-white font-bold py-2 px-4 rounded shadow transition text-sm">
+                    <i class="fa-solid fa-camera mr-2"></i> Tirar Foto / Enviar Nota
+                </button>
+            </div>
+            <div class="overflow-auto custom-scrollbar border rounded">
+                <table class="min-w-full text-sm text-left">
+                    <thead class="bg-slate-100 border-b">
+                        <tr>
+                            <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Data & Hora</th>
+                            <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Categoria</th>
+                            <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Loja Débito</th>
+                            <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Valor (R$)</th>
+                            <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px] text-center">Status / Validade</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbCarteira" class="divide-y divide-slate-100"></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <!-- ==================== TELA DE PRESTAÇÃO DE CONTAS / DETALHES DA VIAGEM ==================== -->
+    <div id="viagemDetalheView" class="hidden min-h-screen container mx-auto p-4 py-8 fade-in">
+        <button onclick="voltarDashboard()" class="text-emerald-600 hover:text-emerald-800 text-sm font-bold mb-4 flex items-center transition">
+            <i class="fa-solid fa-arrow-left mr-1"></i> Voltar ao Painel
+        </button>
+        
+        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+            <div class="bg-slate-900 text-white px-6 py-4 flex flex-col md:flex-row justify-between md:items-center gap-4">
+                <div>
+                    <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest block" id="detalheLojaSigla"></span>
+                    <h2 class="text-xl font-bold" id="detalheMotivo"></h2>
+                    <p class="text-xs text-slate-300 mt-1" id="detalheParticipantes"></p>
+                </div>
+                <div id="detalheStatusBadge"></div>
+            </div>
+
+            <div class="p-6">
+                <!-- BARRAS DE AÇÕES DINÂMICAS -->
+                <div id="painelAcoesViagem" class="mb-6 flex flex-wrap gap-3 items-center justify-between border-b pb-4"></div>
+
+                <h3 class="text-sm font-bold text-slate-700 uppercase mb-3"><i class="fa-solid fa-receipt text-slate-400 mr-2"></i> Despesas Lançadas nesta Viagem (Ordem Cronológica)</h3>
+                
+                <div class="overflow-auto custom-scrollbar border rounded">
+                    <table class="min-w-full text-sm text-left">
+                        <thead class="bg-slate-100 border-b">
+                            <tr>
+                                <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Data</th>
+                                <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Hora</th>
+                                <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Categoria</th>
+                                <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Debitar na Loja</th>
+                                <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px] text-right">Valor</th>
+                                <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px] text-center" id="thAcoesItem">Ação</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbItensViagem" class="divide-y divide-slate-100"></tbody>
+                        <tfoot class="bg-slate-50 border-t">
+                            <tr>
+                                <td colspan="4" class="px-4 py-3 text-right font-bold text-slate-600 text-xs uppercase">Total das Despesas:</td>
+                                <td class="px-4 py-3 text-right font-black text-emerald-600 text-lg" id="detalheTotalValor">R$ 0,00</td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== MODAIS DO SISTEMA ==================== -->
+
+    <!-- 1. MODAL DE CRIAR VIAGEM (COORDENAÇÃO / GERÊNCIA) -->
+    <div id="modalCriarViagem" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center fade-in">
+        <div class="bg-white p-6 rounded-xl shadow-xl w-96 border-t-4 border-emerald-600">
+            <h3 class="text-lg font-bold text-slate-800 mb-4"><i class="fa-solid fa-route text-emerald-600 mr-2"></i> Gerar Número de Viagem</h3>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-500 mb-1">SIGLA DA LOJA (Destino)</label>
+                    <input type="text" id="novaViagemSigla" required maxlength="3" placeholder="Ex: PIN" class="w-full px-3 py-2 text-sm border rounded uppercase bg-slate-50">
+                </div>
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-500 mb-1">MOTIVO / O QUE SERÁ FEITO</label>
+                    <input type="text" id="novaViagemMotivo" required placeholder="Ex: Troca de Servidor e Impressoras" class="w-full px-3 py-2 text-sm border rounded bg-slate-50">
+                </div>
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-500 mb-1">TÉCNICO RESPONSÁVEL (SUPORTE)</label>
+                    <select id="novaViagemColaborador" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></select>
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 mt-6">
+                <button onclick="document.getElementById('modalCriarViagem').classList.add('hidden')" class="px-4 py-2 text-sm font-bold text-slate-500">Cancelar</button>
+                <button onclick="confirmarCriarViagem()" id="btnCriarViagem" class="px-4 py-2 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded">Gerar Viagem</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. MODAL OCR / TIRAR FOTO DA NOTA (SUPORTE) -->
+    <div id="modalOCR" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center fade-in">
+        <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-lg border-t-4 border-amber-500 max-h-[90vh] overflow-y-auto custom-scrollbar">
+            <h3 class="text-lg font-bold text-slate-800 mb-2"><i class="fa-solid fa-camera text-amber-500 mr-2"></i> Leitura de Nota / Cupom (OCR)</h3>
+            <p class="text-xs text-slate-500 mb-4">Envie ou tire a foto do comprovante fiscal ou não fiscal.</p>
+            
+            <input type="file" id="fileOCR" accept="image/*" class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100 mb-4" onchange="processarOCR(event)">
+            
+            <div id="ocrLoader" class="hidden text-center py-6 text-amber-600 font-bold text-sm">
+                <i class="fa-solid fa-spinner fa-spin text-2xl block mb-2"></i> Lendo e transcrevendo dados da nota...
+            </div>
+
+            <div id="ocrForm" class="hidden space-y-3 border-t pt-4">
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-500 mb-1">DATA</label>
+                        <input type="text" id="ocrData" placeholder="DD/MM/AAAA" class="w-full px-3 py-2 text-sm border rounded bg-slate-50">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-500 mb-1">HORA</label>
+                        <input type="text" id="ocrHora" placeholder="HH:MM" onchange="atualizarCategoriaPorHorario()" class="w-full px-3 py-2 text-sm border rounded bg-slate-50">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-500 mb-1">VALOR TOTAL (R$)</label>
+                        <input type="number" step="0.01" id="ocrValor" placeholder="Ex: 35.50" class="w-full px-3 py-2 text-sm border rounded bg-slate-50">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-500 mb-1">ONDE SERÁ DEBITADO (SIGLA LOJA)</label>
+                        <input type="text" id="ocrLoja" placeholder="Ex: TER" maxlength="3" class="w-full px-3 py-2 text-sm uppercase border rounded bg-slate-50">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-500 mb-1">DESPESA / CATEGORIA (Sugerida pelo horário)</label>
+                    <select id="ocrCategoria" class="w-full px-3 py-2 text-sm border rounded bg-slate-50">
+                        <option value="Café da Manhã">Café da Manhã</option>
+                        <option value="Lanche da Manhã">Lanche da Manhã</option>
+                        <option value="Almoço">Almoço</option>
+                        <option value="Lanche da Tarde">Lanche da Tarde</option>
+                        <option value="Janta">Janta</option>
+                        <option value="Lanche da Noite">Lanche da Noite</option>
+                        <option value="Agua">Agua</option>
+                        <option value="Hospedagem">Hospedagem</option>
+                        <option value="Uber/Taxi/99">Uber/Taxi/99</option>
+                        <option value="Passagem de Onibus">Passagem de Onibus</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-2 mt-6">
+                <button onclick="document.getElementById('modalOCR').classList.add('hidden')" class="px-4 py-2 text-sm font-bold text-slate-500">Cancelar</button>
+                <button onclick="salvarNotaNaCarteira()" id="btnSalvarNota" class="hidden px-4 py-2 text-sm font-bold bg-amber-500 hover:bg-amber-600 text-white rounded">Guardar por 30 dias</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. MODAL ANEXAR TICKETS DA CARTEIRA À VIAGEM -->
+    <div id="modalAnexarTickets" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center fade-in">
+        <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-md border-t-4 border-blue-600">
+            <h3 class="text-lg font-bold text-slate-800 mb-2"><i class="fa-solid fa-paperclip text-blue-600 mr-2"></i> Inserir Tickets Guardados</h3>
+            <p class="text-xs text-slate-500 mb-4">Selecione os comprovantes salvos na sua carteira para vincular a esta viagem:</p>
+            
+            <div id="listaTicketsDisponiveis" class="max-h-60 overflow-y-auto custom-scrollbar border rounded p-2 bg-slate-50 space-y-2 mb-4"></div>
+
+            <div class="flex justify-end gap-2">
+                <button onclick="document.getElementById('modalAnexarTickets').classList.add('hidden')" class="px-4 py-2 text-sm font-bold text-slate-500">Cancelar</button>
+                <button onclick="confirmarAnexoTickets()" id="btnConfirmarAnexos" class="px-4 py-2 text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white rounded">Anexar Selecionados</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL RECUPERAR SENHA -->
+    <div id="modalRecuperar" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center fade-in">
+        <div class="bg-white p-6 rounded-xl shadow-xl w-96 border-t-4 border-emerald-500">
+            <h3 class="text-lg font-bold text-slate-800 mb-4"><i class="fa-solid fa-unlock-keyhole text-emerald-500 mr-2"></i> Redefinir Senha</h3>
+            <div id="recupStep1">
+                <input type="text" id="recupLoginInput" placeholder="Digite seu login..." oninput="buscarUsuariosRecup()" class="w-full px-3 py-2 text-sm border rounded bg-slate-50 mb-3 lowercase">
+                <div id="recupListaUsers" class="max-h-40 overflow-auto custom-scrollbar mb-4"></div>
+                <div class="flex justify-end"><button onclick="document.getElementById('modalRecuperar').classList.add('hidden')" class="px-4 py-2 text-sm font-bold text-slate-500">Fechar</button></div>
+            </div>
+            <div id="recupStep2" class="hidden">
+                <p id="recupUserSelected" class="text-xs font-bold text-slate-700 mb-3"></p>
+                <input type="password" id="recupNovaSenha" placeholder="Nova senha (min 4 chars)" class="w-full px-3 py-2 text-sm border rounded bg-slate-50 mb-3">
+                <div class="flex justify-between"><button onclick="document.getElementById('recupStep2').classList.add('hidden'); document.getElementById('recupStep1').classList.remove('hidden');" class="text-xs text-slate-500">Voltar</button><button onclick="confirmarRedefinirSenha()" id="btnRedefinir" class="px-4 py-2 text-sm font-bold bg-emerald-600 text-white rounded">Redefinir</button></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="despesas.js"></script>
+</body>
+</html>
