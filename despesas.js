@@ -48,20 +48,25 @@ function chaveDataOrdenacao(valor) {
 
 // ==================== OCR: DATA / HORA ====================
 
-// Data: DD/MM/AAAA, DD/MM/AA, DD-MM-AAAA, DD.MM.AAAA e fallback ISO AAAA-MM-DD
+// Data: DD/MM/AAAA, DD/MM/AA, DD-MM-AAAA, aceitando erros de OCR comuns (l, 1, I no lugar de /)
 function extrairDataDoTexto(texto) {
-    const t = String(texto || '');
-    const re = /\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/g;
+    const t = String(texto || '').replace(/\s+/g, ' ');
+    // Regex robusta para capturar datas brasileiras com possíveis ruídos de OCR
+    const re = /\b(0[1-9]|[12][0-9]|3[01])[\/\-\.\s\,l1I](0[1-9]|1[012])[\/\-\.\s\,l1I](20\d{2}|\d{2})\b/g;
     let m;
+    let datas = [];
     while ((m = re.exec(t)) !== null) {
         let d = parseInt(m[1], 10);
         let mo = parseInt(m[2], 10);
         let y = parseInt(m[3], 10);
         if (m[3].length === 2) y = 2000 + y;
         if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12 && y >= 2000 && y <= 2100) {
-            return `${pad2(d)}/${pad2(mo)}/${y}`;
+            datas.push(`${pad2(d)}/${pad2(mo)}/${y}`);
         }
     }
+    if (datas.length > 0) return datas[0]; // Pega a primeira data válida encontrada
+
+    // Fallback ISO AAAA-MM-DD
     const reIso = /\b(\d{4})-(\d{2})-(\d{2})\b/g;
     if ((m = reIso.exec(t)) !== null) {
         const y = +m[1], mo = +m[2], d = +m[3];
@@ -70,152 +75,113 @@ function extrairDataDoTexto(texto) {
     return '';
 }
 
-// Hora: HH:MM ou HhMM (14:30, 9:05, 14h30). Se não achar, volta vazio (manual).
+// Hora: HH:MM ou HHhMM. Aceita ruídos como HH;MM ou HH.MM
 function extrairHoraDoTexto(texto) {
-    const re = /\b([01]?\d|2[0-3])[:hH]([0-5]\d)\b/g;
-    const m = re.exec(String(texto || ''));
-    if (m) return `${pad2(parseInt(m[1], 10))}:${m[2]}`;
+    const t = String(texto || '');
+    const re = /\b([01]?\d|2[0-3])[:;hH\.]([0-5]\d)\b/g;
+    let horasEncontradas = [];
+    let m;
+    while ((m = re.exec(t)) !== null) {
+        horasEncontradas.push(`${pad2(parseInt(m[1], 10))}:${m[2]}`);
+    }
+    if (horasEncontradas.length > 0) return horasEncontradas[0];
     return '';
 }
 
-// ==================== OCR: VALOR PAGO (robusto p/ picote de máquina e recibo) ====================
-
-// Monta número a partir de parte inteira (com possíveis pontos de milhar) e centavos
-function _montarMoeda(intPart, decPart) {
-    intPart = String(intPart).replace(/\./g, '').replace(/^0+(?=\d)/, '');
-    if (intPart === '') intPart = '0';
-    if (!/^\d+$/.test(intPart)) return null;
-    decPart = (String(decPart) + '00').slice(0, 2);
-    if (!/^\d{2}$/.test(decPart)) return null;
-    const num = parseFloat(intPart + '.' + decPart);
-    return isFinite(num) ? num : null;
-}
-
-// Converte bloco numérico em valor monetário SÓ se for claramente moeda.
-// temReal = existe um "R$ / RS / $" imediatamente antes do bloco (sem outro dígito no meio).
-// Regras anti-CNPJ/anti-NSU/anti-autorização:
-//  - com vírgula: decimal = vírgula (45,90 / 1.234,56) -> ok
-//  - sem vírgula e 0 pontos: inteiro sem centavos -> só aceita se temReal (R$ 50 -> 50,00)
-//  - sem vírgula e 2+ pontos: 12.345.678 (CNPJ/milhar sem centavos) -> descarta sempre
-//  - sem vírgula e 1 ponto: 2 dígitos depois = decimal (45.90); 3 dígitos = milhar só se temReal (R$ 1.234); 1 dígito só se temReal
-function normalizarValorMoeda(bloco, temReal) {
-    let s = String(bloco || '').replace(/\s+/g, '');
-    if (!/^\d[\d.,]*$/.test(s)) return null;
-
-    const commaCount = (s.match(/,/g) || []).length;
-    const dotCount = (s.match(/\./g) || []).length;
-    if (commaCount > 1) return null;
-
-    const lastComma = s.lastIndexOf(',');
-    const lastDot = s.lastIndexOf('.');
-
-    if (lastComma !== -1) {
-        const intPart = s.slice(0, lastComma);
-        const decPart = s.slice(lastComma + 1);
-        if (!/^\d{1,2}$/.test(decPart)) return null;
-        return _montarMoeda(intPart, decPart);
-    }
-
-    if (dotCount === 0) {
-        return temReal ? _montarMoeda(s, '00') : null;
-    }
-
-    if (dotCount >= 2) return null;
-
-    const after = s.slice(lastDot + 1);
-    const before = s.slice(0, lastDot);
-    if (/^\d{2}$/.test(after)) return _montarMoeda(before, after);
-    if (temReal) {
-        if (/^\d{1}$/.test(after)) return _montarMoeda(before, after);
-        if (/^\d{3}$/.test(after)) return _montarMoeda(s.replace(/\./g, ''), '00');
-    }
-    return null;
-}
+// ==================== OCR: VALOR PAGO (Melhorado p/ Cupons e Máquinas) ====================
 
 function extrairValorDoTexto(texto) {
-    const t = String(texto || '');
-    const candidatos = []; // { num, score }
+    const t = String(texto || '').toUpperCase().replace(/\n/g, ' ');
+    const candidatos = [];
 
-    function add(num, base, temRealBonus) {
-        if (num === null || num === undefined) return;
-        if (!(num >= 0.01 && num <= 1000000)) return; // sanidade de magnitude
-        candidatos.push({ num: num, score: base + (temRealBonus ? 50 : 0) });
+    function add(num, base) {
+        if (num === null || isNaN(num) || num <= 0 || num > 50000) return;
+        candidatos.push({ num: num, score: base });
     }
 
-    // A partir de uma posição, acha o PRIMEIRO número que seja moeda válida na janela,
-    // pulando palavras intermediárias (ex.: "12X DE", "VISA ****") e detecta R$ antes dele.
-    function capturarApos(inicio) {
-        const janela = t.slice(inicio, inicio + 80);
-        const reNum = /\d[\d.,]*\d|\d/g;
-        let m;
-        while ((m = reNum.exec(janela)) !== null) {
-            const antes = janela.slice(0, m.index);
-            const temReal = /(R\$|RS|\$)\s*[^0-9]*$/i.test(antes);
-            const num = normalizarValorMoeda(m[0], temReal);
-            if (num === null) continue;
-            return { num: num, temReal: temReal };
-        }
-        return null;
+    // Processa de forma robusta strings de dinheiro que podem vir com "." ou "," do OCR
+    function parseMoedaBR(str) {
+        let clean = String(str).replace(/[^\d.,]/g, '');
+        const lastComma = clean.lastIndexOf(',');
+        const lastDot = clean.lastIndexOf('.');
+        const lastSeparator = Math.max(lastComma, lastDot);
+        if (lastSeparator === -1) return parseFloat(clean);
+        const intPart = clean.substring(0, lastSeparator).replace(/[.,]/g, '');
+        const decPart = clean.substring(lastSeparator + 1);
+        return parseFloat((intPart || '0') + '.' + decPart);
     }
 
-    // Rótulos de peso ALTO (indicam o valor total/pago da transação)
-    const rotulosFortes = [
-        /\bCR[EÉ]DITO\s+[ÀA]\s+VISTA\b/gi,
-        /\bD[EÉ]BITO\s+[ÀA]\s+VISTA\b/gi,
-        /\bPAGAMENTO\s+[ÀA]\s+VISTA\b/gi,
-        /\b[ÀA]\s+VISTA\b/gi,
-        /\bCR[EÉ]DITO\s+PARCELADO\b/gi,
-        /\bVALOR\s+(?:PAGO|A\s+PAGAR|TOTAL|DA\s+(?:COMPRA|TRANSA[ÇC][ÃA]O|OPERACAO))\b/gi,
-        /\bTOTAL\b(?:\s+(?:DA\s+)?(?:COMPRA|TRANSA[ÇC][ÃA]O|A\s+PAGAR|PAGO))?/gi,
-        /\bTOTAIS\b/gi,
-        /\bV[RRL]\s*\.?\s*TOT\b/gi,
-        /\bTOMBAMENTO\b/gi
+    // Padrão que pega valores terminados em dois dígitos decimais (ex: 1.234,56 ou 1234.56 ou 12,34)
+    const regexMoeda = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/;
+
+    // 1. Busca por valores que possuam prefixo monetário antes
+    const reMoedaBR = /(?:R\$|RS|S\$|\$)\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/g;
+    let m;
+    while ((m = reMoedaBR.exec(t)) !== null) {
+        add(parseMoedaBR(m[1]), 60);
+    }
+
+    // 2. Busca valores genéricos que estejam próximos de palavras fortes do contexto
+    const palavrasChave = [
+        { regex: /TOTAL/g, score: 100 },
+        { regex: /PAGO/g, score: 90 },
+        { regex: /VALOR/g, score: 80 },
+        { regex: /D[EÉ]BITO/g, score: 70 },
+        { regex: /CR[EÉ]DITO/g, score: 70 },
+        { regex: /PIX/g, score: 70 },
+        { regex: /DINHEIRO/g, score: 70 },
+        { regex: /CART[AÃ]O/g, score: 70 },
+        { regex: /VISA/g, score: 60 },
+        { regex: /MASTERCARD/g, score: 60 },
+        { regex: /MAESTRO/g, score: 60 },
+        { regex: /ELO/g, score: 60 },
+        { regex: /AMEX/g, score: 60 },
+        { regex: /APROVAD[OA]/g, score: 60 },
+        { regex: /TOMBAMENTO/g, score: 60 }
     ];
 
-    // Rótulos de peso MÉDIO
-    const rotulosFracos = [
-        /\bVALOR\b/gi,
-        /\bPAGO\b/gi,
-        /\bSUBTOTAL\b/gi,
-        /\bCR[EÉ]DITO\b/gi,
-        /\bD[EÉ]BITO\b/gi
-    ];
-
-    for (const re of rotulosFortes) {
-        let m; re.lastIndex = 0;
-        while ((m = re.exec(t)) !== null) {
-            const cap = capturarApos(m.index + m[0].length);
-            if (cap) add(cap.num, 100, cap.temReal);
+    palavrasChave.forEach(pc => {
+        let matchChave;
+        const re = new RegExp(pc.regex, 'gi');
+        while ((matchChave = re.exec(t)) !== null) {
+            // Olha uma janela de 60 caracteres a frente da palavra chave
+            const trecho = t.substring(matchChave.index, matchChave.index + 60);
+            const matchValor = trecho.match(regexMoeda);
+            if (matchValor) {
+                 add(parseMoedaBR(matchValor[0]), pc.score);
+            }
         }
-    }
+    });
 
-    for (const re of rotulosFracos) {
-        let m; re.lastIndex = 0;
-        while ((m = re.exec(t)) !== null) {
-            const cap = capturarApos(m.index + m[0].length);
-            if (cap) add(cap.num, 30, cap.temReal);
-        }
-    }
-
-    // Qualquer "R$ 45,90" / "R$ 50" isolado (peso médio-baixo, mas vence número solto)
-    const reReal = /(R\$|RS|\$)\s*(\d[\d.,]*\d|\d)/gi;
-    let mr;
-    while ((mr = reReal.exec(t)) !== null) {
-        add(normalizarValorMoeda(mr[2], true), 60, false);
-    }
-
-    // Fallback: número em formato BR puro com centavos, mesmo sem rótulo/R$
-    const reBR = /\b\d{1,3}(?:\.\d{3})*,\d{2}\b/g;
-    let mb;
-    while ((mb = reBR.exec(t)) !== null) {
-        add(normalizarValorMoeda(mb[0], false), 5, false);
+    // 3. Fallback: Qualquer número solto no formato moeda com 2 decimais
+    let reQualquerValor = new RegExp(regexMoeda, 'g');
+    while ((m = reQualquerValor.exec(t)) !== null) {
+        add(parseMoedaBR(m[0]), 10);
     }
 
     if (candidatos.length === 0) return '';
 
-    // Maior score vence; empate -> maior valor (pega o TOTAL, não subtotal/parcela/troco)
-    candidatos.sort((a, b) => (b.score - a.score) || (b.num - a.num));
-    return candidatos[0].num.toFixed(2);
+    // 4. Agrupa e consolida as pontuações do mesmo valor (Relevância)
+    const scoresPorValor = {};
+    candidatos.forEach(c => {
+        if (!scoresPorValor[c.num]) scoresPorValor[c.num] = 0;
+        scoresPorValor[c.num] += c.score;
+    });
+
+    // 5. Vence o valor com o maior score consolidado. Empate: o MAIOR valor financeiro vence.
+    let bestNum = 0;
+    let bestScore = -1;
+
+    for (const numStr in scoresPorValor) {
+        const num = parseFloat(numStr);
+        const score = scoresPorValor[numStr];
+        if (score > bestScore || (score === bestScore && num > bestNum)) {
+            bestScore = score;
+            bestNum = num;
+        }
+    }
+
+    return bestNum > 0 ? bestNum.toFixed(2) : '';
 }
 
 // ==================== UTILITÁRIOS PARA DRIVE / COMPRUVANTE ====================
@@ -651,7 +617,7 @@ async function processarOCR(event) {
 
             document.getElementById('ocrData').value = dataDet;     // da foto
             document.getElementById('ocrHora').value = horaDet;      // da foto; vazio = manual
-            document.getElementById('ocrValor').value = valorDet;    // valor pago (picote/recibo)
+            document.getElementById('ocrValor').value = valorDet;    // valor pago formatado como número float 'XX.XX'
             // Loja e Categoria permanecem VAZIAS (manuais por padrão)
 
             const faltantes = [];
