@@ -174,6 +174,7 @@
                                 <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Categoria</th>
                                 <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Debitar na Loja</th>
                                 <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px] text-right">Valor</th>
+                                <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px] text-center">Comprovante</th>
                                 <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px] text-center" id="thAcoesItem">Ação</th>
                             </tr>
                         </thead>
@@ -182,6 +183,7 @@
                             <tr>
                                 <td colspan="4" class="px-4 py-3 text-right font-bold text-slate-600 text-xs uppercase">Total das Despesas:</td>
                                 <td class="px-4 py-3 text-right font-black text-emerald-600 text-lg" id="detalheTotalValor">R$ 0,00</td>
+                                <td></td>
                                 <td></td>
                             </tr>
                         </tfoot>
@@ -225,6 +227,11 @@
             <p class="text-xs text-slate-500 mb-4">Envie ou tire a foto do comprovante fiscal ou não fiscal.</p>
             
             <input type="file" id="fileOCR" accept="image/*" class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100 mb-4" onchange="processarOCR(event)">
+
+            <div id="ocrPreviewContainer" class="hidden mb-4 text-center bg-slate-50 border rounded p-2">
+                <img id="ocrPreview" class="max-h-56 mx-auto rounded shadow-sm" alt="Pré-visualização do comprovante">
+                <p class="text-[10px] text-slate-500 mt-2">Esta imagem será enviada ao Google Drive ao salvar.</p>
+            </div>
             
             <div id="ocrLoader" class="hidden text-center py-6 text-amber-600 font-bold text-sm">
                 <i class="fa-solid fa-spinner fa-spin text-2xl block mb-2"></i> Lendo e transcrevendo dados da nota...
