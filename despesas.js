@@ -83,7 +83,7 @@ function extrairHoraDoTexto(texto) {
     return '';
 }
 
-// ==================== OCR: VALOR (MELHORADO) ====================
+// ==================== OCR: VALOR (MELHORADO COM TODOS OS TIPOS DE PAGAMENTO) ====================
 
 function extrairValorDoTexto(texto) {
     let t = String(texto || '').toUpperCase().replace(/\n/g, ' ');
@@ -93,7 +93,7 @@ function extrairValorDoTexto(texto) {
     t = t.replace(/(\d[,.])O(\d)/g, '$10$2').replace(/(\d[,.])\dO/g, '$1$20').replace(/(\d[,.])OO/g, '$100');
 
     // Extrai todos os valores monetários possíveis
-    const regexMoeda = /(?:R\$\s*|RS\s*|\$\s*|VALOR\s*|TOTAL\s*)?(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})(?=[^\d]|$)/g;
+    const regexMoeda = /(?:R\$\s*|RS\s*|\$\s*)?(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})(?=[^\d]|$)/g;
     let m;
     let valores = [];
 
@@ -111,8 +111,7 @@ function extrairValorDoTexto(texto) {
                     original: m[0], 
                     num: num, 
                     index: m.index,
-                    temReal: m[0].includes('R$') || m[0].includes('RS') || m[0].includes('$'),
-                    temTotal: m[0].includes('TOTAL')
+                    temReal: m[0].includes('R$') || m[0].includes('RS') || m[0].includes('$')
                 });
             }
         }
@@ -120,21 +119,49 @@ function extrairValorDoTexto(texto) {
 
     if (valores.length === 0) return '';
 
-    // Palavras-chave com pesos
+    // TODOS os tipos de palavras-chave de pagamento com pesos
     const palavrasChave = [
-        { regex: /TOTAL\s*DA\s*COMPRA/g, peso: 150 },
-        { regex: /VALOR\s*PAGO/g, peso: 140 },
-        { regex: /TOTAL\s*A\s*PAGAR/g, peso: 140 },
-        { regex: /TOTAL\s*:/g, peso: 130 },
-        { regex: /PAGO\s*:/g, peso: 120 },
-        { regex: /TOMBAMENTO/g, peso: 110 },
-        { regex: /VALOR\s*:/g, peso: 100 },
-        { regex: /CART[AÃ]O/g, peso: 90 },
-        { regex: /PIX/g, peso: 90 },
-        { regex: /D[EÉ]BITO/g, peso: 80 },
-        { regex: /CR[EÉ]DITO/g, peso: 80 },
-        { regex: /TOTAL/g, peso: 70 },
-        { regex: /VALOR/g, peso: 60 }
+        // Pagamentos diretos (maior prioridade)
+        { regex: /VALOR\s*PAGO/g, peso: 200 },
+        { regex: /PAGO\s*:/g, peso: 190 },
+        { regex: /PAGO\s*=/g, peso: 190 },
+        { regex: /TOTAL\s*PAGO/g, peso: 190 },
+        
+        // Totais
+        { regex: /TOTAL\s*DA\s*COMPRA/g, peso: 180 },
+        { regex: /TOTAL\s*A\s*PAGAR/g, peso: 180 },
+        { regex: /TOTAL\s*:/g, peso: 170 },
+        { regex: /TOTAL\s*=/g, peso: 170 },
+        { regex: /TOTAL\s*:/g, peso: 170 },
+        { regex: /TOTAIS/g, peso: 160 },
+        
+        // Cartão de crédito
+        { regex: /CREDITO\s*A\s*VISTA/g, peso: 160 },
+        { regex: /CREDITO\s*A\s*PRAZO/g, peso: 150 },
+        { regex: /CARTAO\s*CREDITO/g, peso: 150 },
+        { regex: /CARTÃO\s*CREDITO/g, peso: 150 },
+        { regex: /CREDITO/g, peso: 140 },
+        
+        // Cartão de débito
+        { regex: /DEBITO\s*A\s*VISTA/g, peso: 150 },
+        { regex: /CARTAO\s*DEBITO/g, peso: 140 },
+        { regex: /CARTÃO\s*DEBITO/g, peso: 140 },
+        { regex: /DEBITO/g, peso: 130 },
+        
+        // Pix
+        { regex: /PIX/g, peso: 140 },
+        
+        // Dinheiro
+        { regex: /DINHEIRO/g, peso: 130 },
+        { regex: /ESPECIE/g, peso: 130 },
+        { regex: /ESPÉCIE/g, peso: 130 },
+        
+        // Outros
+        { regex: /TOMBAMENTO/g, peso: 120 },
+        { regex: /VALOR\s*:/g, peso: 110 },
+        { regex: /VALOR\s*=/g, peso: 110 },
+        { regex: /VALOR/g, peso: 100 },
+        { regex: /PAGAMENTO/g, peso: 100 }
     ];
 
     let bestNum = 0;
@@ -145,10 +172,10 @@ function extrairValorDoTexto(texto) {
 
         // Bônus por ter R$ ou TOTAL no próprio valor
         if (v.temReal) score += 40;
-        if (v.temTotal) score += 30;
+        if (v.original.includes('TOTAL')) score += 30;
 
-        // Analisa a vizinhança (80 caracteres ANTES do valor)
-        const inicio = Math.max(0, v.index - 80);
+        // Analisa a vizinhança (100 caracteres ANTES do valor)
+        const inicio = Math.max(0, v.index - 100);
         const janela = t.substring(inicio, v.index);
         
         palavrasChave.forEach(pc => {
@@ -308,16 +335,50 @@ function showToast(message, type = 'info', title = null, duration = 4000) {
     setTimeout(fechar, duration);
 }
 
+// ==================== MODAL DE CONFIRMAÇÃO (CORRIGIDO - EVITA DUPLICAÇÃO) ====================
 function showConfirm(message, options = {}) {
     return new Promise((resolve) => {
+        // Remove qualquer modal existente antes de criar um novo
+        const existingOverlay = document.querySelector('.modal-overlay');
+        if (existingOverlay) {
+            existingOverlay.remove();
+        }
+        
         const { title = 'Confirmar Ação', confirmText = 'Confirmar', cancelText = 'Cancelar', type = 'warning', icon = 'fa-question' } = options;
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
-        overlay.innerHTML = `<div class="modal-confirm"><div class="modal-header ${type}"><div class="modal-icon"><i class="fa-solid ${icon}"></i></div><h3 class="modal-title">${title}</h3></div><div class="modal-body"><p class="modal-message">${message}</p></div><div class="modal-footer"><button class="modal-btn modal-btn-cancel" id="modalCancel">${cancelText}</button><button class="modal-btn ${type === 'danger' ? 'modal-btn-danger' : 'modal-btn-confirm'}" id="modalConfirm">${confirmText}</button></div></div>`;
+        overlay.innerHTML = `
+            <div class="modal-confirm">
+                <div class="modal-header ${type}">
+                    <div class="modal-icon"><i class="fa-solid ${icon}"></i></div>
+                    <h3 class="modal-title">${title}</h3>
+                </div>
+                <div class="modal-body">
+                    <p class="modal-message">${message}</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn modal-btn-cancel" id="modalCancel">${cancelText}</button>
+                    <button class="modal-btn ${type === 'danger' ? 'modal-btn-danger' : 'modal-btn-confirm'}" id="modalConfirm">${confirmText}</button>
+                </div>
+            </div>
+        `;
         document.body.appendChild(overlay);
-        const cleanup = () => { overlay.style.animation = 'fadeIn 0.2s ease-out reverse'; setTimeout(() => overlay.remove(), 200); };
+        
+        const cleanup = () => { 
+            overlay.style.animation = 'fadeIn 0.2s ease-out reverse'; 
+            setTimeout(() => overlay.remove(), 200); 
+        };
+        
         document.getElementById('modalConfirm').onclick = () => { cleanup(); resolve(true); };
         document.getElementById('modalCancel').onclick = () => { cleanup(); resolve(false); };
+        
+        // Fecha ao clicar fora do modal
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                cleanup();
+                resolve(false);
+            }
+        });
     });
 }
 
@@ -832,6 +893,12 @@ async function confirmarAnexoTickets() {
 }
 
 async function removerItemViagem(idComp) {
+    // Remove modais existentes antes de criar um novo
+    const existingOverlay = document.querySelector('.modal-overlay');
+    if (existingOverlay) {
+        existingOverlay.remove();
+    }
+    
     if (!await showConfirm("Devolver este ticket para sua carteira temporária?")) return;
     const r = await fetchAPI({ action: 'removeComprovanteFromViagem', idComprovante: idComp, login: userData.login });
     if (r.success) { showToast('Ticket removido.', 'info'); recarregarDashboard(); }
