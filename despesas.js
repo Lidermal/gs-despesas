@@ -335,7 +335,7 @@ function showToast(message, type = 'info', title = null, duration = 4000) {
     setTimeout(fechar, duration);
 }
 
-// ==================== MODAL DE CONFIRMAÇÃO (CORRIGIDO - EVITA DUPLICAÇÃO) ====================
+// ==================== MODAL DE CONFIRMAÇÃO (CORRIGIDO COM CSS) ====================
 function showConfirm(message, options = {}) {
     return new Promise((resolve) => {
         // Remove qualquer modal existente antes de criar um novo
@@ -345,32 +345,69 @@ function showConfirm(message, options = {}) {
         }
         
         const { title = 'Confirmar Ação', confirmText = 'Confirmar', cancelText = 'Cancelar', type = 'warning', icon = 'fa-question' } = options;
+        
+        // Cria o overlay com estilos inline para garantir que funcione
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
-        overlay.innerHTML = `
-            <div class="modal-confirm">
-                <div class="modal-header ${type}">
-                    <div class="modal-icon"><i class="fa-solid ${icon}"></i></div>
-                    <h3 class="modal-title">${title}</h3>
-                </div>
-                <div class="modal-body">
-                    <p class="modal-message">${message}</p>
-                </div>
-                <div class="modal-footer">
-                    <button class="modal-btn modal-btn-cancel" id="modalCancel">${cancelText}</button>
-                    <button class="modal-btn ${type === 'danger' ? 'modal-btn-danger' : 'modal-btn-confirm'}" id="modalConfirm">${confirmText}</button>
-                </div>
+        overlay.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            animation: fadeIn 0.2s ease-out;
+        `;
+        
+        const modalContent = document.createElement('div');
+        modalContent.className = 'modal-confirm';
+        modalContent.style.cssText = `
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            max-width: 400px;
+            width: 90%;
+            overflow: hidden;
+            animation: slideUp 0.3s ease-out;
+        `;
+        
+        const headerColors = {
+            warning: 'bg-amber-500',
+            danger: 'bg-red-500',
+            info: 'bg-blue-500',
+            success: 'bg-emerald-500'
+        };
+        
+        modalContent.innerHTML = `
+            <div class="modal-header ${headerColors[type] || headerColors.warning}" style="background: ${type === 'danger' ? '#ef4444' : type === 'info' ? '#3b82f6' : type === 'success' ? '#10b981' : '#f59e0b'}; color: white; padding: 1rem; display: flex; align-items: center; gap: 0.75rem;">
+                <div class="modal-icon" style="font-size: 1.5rem;"><i class="fa-solid ${icon}"></i></div>
+                <h3 class="modal-title" style="font-weight: 700; font-size: 1.125rem;">${title}</h3>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem;">
+                <p class="modal-message" style="color: #475569; line-height: 1.5;">${message}</p>
+            </div>
+            <div class="modal-footer" style="padding: 1rem 1.5rem; background: #f8fafc; display: flex; gap: 0.75rem; justify-content: flex-end;">
+                <button class="modal-btn modal-btn-cancel" style="padding: 0.5rem 1rem; border-radius: 0.375rem; font-weight: 600; font-size: 0.875rem; background: #e2e8f0; color: #475569; border: none; cursor: pointer; transition: all 0.2s;">${cancelText}</button>
+                <button class="modal-btn modal-btn-confirm" style="padding: 0.5rem 1rem; border-radius: 0.375rem; font-weight: 600; font-size: 0.875rem; background: ${type === 'danger' ? '#ef4444' : '#f59e0b'}; color: white; border: none; cursor: pointer; transition: all 0.2s;">${confirmText}</button>
             </div>
         `;
+        
+        overlay.appendChild(modalContent);
         document.body.appendChild(overlay);
         
         const cleanup = () => { 
-            overlay.style.animation = 'fadeIn 0.2s ease-out reverse'; 
-            setTimeout(() => overlay.remove(), 200); 
+            overlay.style.animation = 'fadeOut 0.2s ease-out';
+            setTimeout(() => {
+                overlay.remove();
+            }, 200);
         };
         
-        document.getElementById('modalConfirm').onclick = () => { cleanup(); resolve(true); };
-        document.getElementById('modalCancel').onclick = () => { cleanup(); resolve(false); };
+        modalContent.querySelector('.modal-btn-confirm').onclick = () => { cleanup(); resolve(true); };
+        modalContent.querySelector('.modal-btn-cancel').onclick = () => { cleanup(); resolve(false); };
         
         // Fecha ao clicar fora do modal
         overlay.addEventListener('click', (e) => {
@@ -893,12 +930,6 @@ async function confirmarAnexoTickets() {
 }
 
 async function removerItemViagem(idComp) {
-    // Remove modais existentes antes de criar um novo
-    const existingOverlay = document.querySelector('.modal-overlay');
-    if (existingOverlay) {
-        existingOverlay.remove();
-    }
-    
     if (!await showConfirm("Devolver este ticket para sua carteira temporária?")) return;
     const r = await fetchAPI({ action: 'removeComprovanteFromViagem', idComprovante: idComp, login: userData.login });
     if (r.success) { showToast('Ticket removido.', 'info'); recarregarDashboard(); }
