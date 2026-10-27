@@ -46,87 +46,9 @@ function chaveDataOrdenacao(valor) {
     return isNaN(d.getTime()) ? new Date(0) : d;
 }
 
-// ==================== OCR: EXTRAÇÃO INTELIGENTE (DATA / HORA / VALOR) ====================
+// ==================== OCR: DATA / HORA ====================
 
-// Normaliza um "bloco numérico" bruto (ex: "1.234,56", "12,34", "1234.56") para string float "1234.56" ou null
-function normalizarBlocoNumero(bloco) {
-    let s = String(bloco || '').replace(/\s+/g, '');
-    if (!/^\d[\d.,]*$/.test(s)) return null;
-
-    const lastComma = s.lastIndexOf(',');
-    const lastDot = s.lastIndexOf('.');
-    let intPart, decPart;
-
-    if (lastComma !== -1) {
-        // Formato BR: vírgula = decimal, pontos = milhar
-        intPart = s.slice(0, lastComma).replace(/\./g, '');
-        decPart = s.slice(lastComma + 1);
-        if (!/^\d{1,2}$/.test(decPart)) return null;
-    } else if (lastDot !== -1) {
-        const after = s.slice(lastDot + 1);
-        const dotsCount = (s.match(/\./g) || []).length;
-        if (dotsCount > 1) {
-            // Vários pontos = todos milhares, sem centavos
-            intPart = s.replace(/\./g, '');
-            decPart = '00';
-        } else if (/^\d{3}$/.test(after)) {
-            // Um ponto + 3 dígitos = milhar sem centavos
-            intPart = s.replace(/\./g, '');
-            decPart = '00';
-        } else if (/^\d{1,2}$/.test(after)) {
-            // Um ponto + 1~2 dígitos = decimal
-            intPart = s.slice(0, lastDot);
-            decPart = after;
-        } else {
-            return null;
-        }
-    } else {
-        // Só dígitos, sem separador decimal -> não tratamos como valor com centavos
-        return null;
-    }
-
-    intPart = intPart.replace(/^0+(?=\d)/, '');
-    if (intPart === '') intPart = '0';
-    decPart = (decPart + '00').slice(0, 2);
-    return intPart + '.' + decPart;
-}
-
-// Captura todos os blocos numéricos do texto (evita casar parciais de números maiores)
-function extrairTodosValores(texto) {
-    const blocos = String(texto || '').match(/\d[\d.,]*\d|\d/g) || [];
-    const vals = [];
-    for (const b of blocos) {
-        const n = normalizarBlocoNumero(b);
-        if (n !== null) vals.push(parseFloat(n));
-    }
-    return vals;
-}
-
-// Procura valor associado a palavras-chave de total (TOTAL, VALOR A PAGAR, etc.)
-function extrairValorPorKeyword(texto) {
-    const re = /(?:VALOR\s*(?:TOTAL|A\s*PAGAR|PAGO|TOTAIS?)|TOTAL|TTL|VL\s*TOT|SOMA)[^\d]{0,40}?(\d[\d.,]*\d|\d)/gi;
-    let m, best = null;
-    while ((m = re.exec(texto)) !== null) {
-        const n = normalizarBlocoNumero(m[1]);
-        if (n !== null) {
-            const v = parseFloat(n);
-            if (best === null || v > best) best = v;
-        }
-    }
-    return best;
-}
-
-// Valor final: prioriza keyword; senão, o maior valor com centavos do documento
-function extrairValorDoTexto(texto) {
-    const kw = extrairValorPorKeyword(texto);
-    if (kw !== null) return kw.toFixed(2);
-
-    const todos = extrairTodosValores(texto);
-    if (todos.length === 0) return '';
-    return Math.max.apply(null, todos).toFixed(2);
-}
-
-// Data: DD/MM/AAAA, DD/MM/AA, DD-MM-AAAA, DD.MM.AAAA e, como fallback, ISO AAAA-MM-DD
+// Data: DD/MM/AAAA, DD/MM/AA, DD-MM-AAAA, DD.MM.AAAA e fallback ISO AAAA-MM-DD
 function extrairDataDoTexto(texto) {
     const t = String(texto || '');
     const re = /\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/g;
@@ -148,12 +70,138 @@ function extrairDataDoTexto(texto) {
     return '';
 }
 
-// Hora: HH:MM ou HhMM (ex: 14:30, 9:05, 14h30). Se não achar, volta vazio (manual).
+// Hora: HH:MM ou HhMM (14:30, 9:05, 14h30). Se não achar, volta vazio (manual).
 function extrairHoraDoTexto(texto) {
     const re = /\b([01]?\d|2[0-3])[:hH]([0-5]\d)\b/g;
     const m = re.exec(String(texto || ''));
     if (m) return `${pad2(parseInt(m[1], 10))}:${m[2]}`;
     return '';
+}
+
+// ==================== OCR: VALOR PAGO (robusto p/ picote de máquina e recibo) ====================
+
+// Monta número a partir de parte inteira (com possíveis pontos de milhar) e centavos
+function _montarNumeroMoeda(intPart, decPart) {
+    intPart = String(intPart).replace(/\./g, '').replace(/^0+(?=\d)/, '');
+    if (intPart === '') intPart = '0';
+    if (!/^\d+$/.test(intPart)) return null;
+    decPart = (String(decPart) + '00').slice(0, 2);
+    if (!/^\d{2}$/.test(decPart)) return null;
+    const num = parseFloat(intPart + '.' + decPart);
+    if (!isFinite(num)) return null;
+    return num;
+}
+
+// Converte um bloco numérico em valor monetário SÓ se for claramente moeda.
+// Regras anti-CNPJ/anti-autorização:
+//  - com vírgula: decimal = vírgula (45,90 / 1.234,56) -> ok
+//  - sem vírgula e 0 pontos: inteiro sem centavos -> NÃO é moeda
+//  - sem vírgula e 2+ pontos: 12.345.678 (CNPJ/milhar sem centavos) -> descarta
+//  - sem vírgula e 1 ponto: só aceita se 2 dígitos depois (45.90 decimal ponto); 3 dígitos (1.234) descarta
+function normalizarValorMoeda(bloco) {
+    let s = String(bloco || '').replace(/\s+/g, '');
+    if (!/^\d[\d.,]*$/.test(s)) return null;
+
+    const commaCount = (s.match(/,/g) || []).length;
+    const dotCount = (s.match(/\./g) || []).length;
+    if (commaCount > 1) return null;
+
+    const lastComma = s.lastIndexOf(',');
+    const lastDot = s.lastIndexOf('.');
+
+    if (lastComma !== -1) {
+        const intPart = s.slice(0, lastComma);
+        const decPart = s.slice(lastComma + 1);
+        if (!/^\d{1,2}$/.test(decPart)) return null;
+        return _montarNumeroMoeda(intPart, decPart);
+    }
+
+    if (dotCount === 0) return null;
+    if (dotCount >= 2) return null;
+
+    const after = s.slice(lastDot + 1);
+    const before = s.slice(0, lastDot);
+    if (/^\d{2}$/.test(after)) return _montarNumeroMoeda(before, after);
+    return null;
+}
+
+function extrairValorDoTexto(texto) {
+    const t = String(texto || '');
+    const candidatos = []; // { num, score }
+
+    function addCandidato(num, scoreBase, temReal) {
+        if (num === null || num === undefined) return;
+        if (!(num >= 0.01 && num <= 1000000)) return; // sanidade de magnitude
+        candidatos.push({ num: num, score: scoreBase + (temReal ? 50 : 0) });
+    }
+
+    // A partir de uma posição, acha o PRIMEIRO número que seja moeda válida na janela,
+    // pulando palavras intermediárias (ex.: "DA COMPRA:", "EM 28/10") e detecta R$ antes dele.
+    function capturarApos(inicio) {
+        const janela = t.slice(inicio, inicio + 60);
+        const reNum = /\d[\d.,]*\d|\d/g;
+        let m;
+        while ((m = reNum.exec(janela)) !== null) {
+            const num = normalizarValorMoeda(m[0]);
+            if (num === null) continue;
+            const antes = janela.slice(0, m.index);
+            const temReal = /(R\$|RS|\$)\s*[^0-9]*$/i.test(antes);
+            return { num: num, temReal: temReal };
+        }
+        return null;
+    }
+
+    // Rótulos de peso ALTO (indicam o valor total/pago)
+    const rotulosFortes = [
+        /\bVALOR\s+(?:PAGO|A\s+PAGAR|TOTAL|DA\s+(?:TRANSA[ÇC][ÃA]O|OPERACAO))/gi,
+        /\bTOTAL\b(?:\s+(?:DA\s+)?(?:COMPRA|TRANSA[ÇC][ÃA]O|A\s+PAGAR|PAGO))?/gi,
+        /\bTOTAIS\b/gi,
+        /\bVL\s*\.?\s*TOT\b/gi,
+        /\bTOMBAMENTO\b/gi
+    ];
+
+    // Rótulos de peso MÉDIO
+    const rotulosFracos = [
+        /\bVALOR\b/gi,
+        /\bPAGO\b/gi,
+        /\bSUBTOTAL\b/gi
+    ];
+
+    for (const re of rotulosFortes) {
+        let m; re.lastIndex = 0;
+        while ((m = re.exec(t)) !== null) {
+            const cap = capturarApos(m.index + m[0].length);
+            if (cap) addCandidato(cap.num, 100, cap.temReal);
+        }
+    }
+
+    for (const re of rotulosFracos) {
+        let m; re.lastIndex = 0;
+        while ((m = re.exec(t)) !== null) {
+            const cap = capturarApos(m.index + m[0].length);
+            if (cap) addCandidato(cap.num, 30, cap.temReal);
+        }
+    }
+
+    // Qualquer "R$ 45,90" isolado (peso baixo, mas com bônus de R$)
+    const reReal = /(R\$|RS|\$)\s*(\d[\d.,]*\d|\d)/gi;
+    let mr;
+    while ((mr = reReal.exec(t)) !== null) {
+        addCandidato(normalizarValorMoeda(mr[2]), 10, true);
+    }
+
+    // Fallback: número em formato BR puro com centavos, mesmo sem rótulo/R$
+    const reBR = /\b\d{1,3}(?:\.\d{3})*,\d{2}\b/g;
+    let mb;
+    while ((mb = reBR.exec(t)) !== null) {
+        addCandidato(normalizarValorMoeda(mb[0]), 5, false);
+    }
+
+    if (candidatos.length === 0) return '';
+
+    // Maior score vence; empate -> maior valor (pega o TOTAL, não subtotal/troco)
+    candidatos.sort((a, b) => (b.score - a.score) || (b.num - a.num));
+    return candidatos[0].num.toFixed(2);
 }
 
 // ==================== UTILITÁRIOS PARA DRIVE / COMPRUVANTE ====================
@@ -532,7 +580,6 @@ function abrirModalOCR() {
     document.getElementById('btnSalvarNota').classList.add('hidden');
     document.getElementById('fileOCR').value = "";
 
-    // Limpa campos do formulário a cada abertura
     document.getElementById('ocrData').value = '';
     document.getElementById('ocrHora').value = '';
     document.getElementById('ocrValor').value = '';
@@ -555,7 +602,6 @@ async function processarOCR(event) {
 
     ocrTextoExtraido = '';
 
-    // Limpa antes de ler
     document.getElementById('ocrData').value = '';
     document.getElementById('ocrHora').value = '';
     document.getElementById('ocrValor').value = '';
@@ -572,7 +618,6 @@ async function processarOCR(event) {
     if (preview) preview.src = '';
 
     try {
-        // 1) Prepara a imagem (base64 + redimensionamento) para envio ao Drive
         ocrImagemBase64 = await converterFileParaBase64(file);
         const matchMime = String(ocrImagemBase64).match(/^data:([^;]+);base64,/);
         ocrMimeType = matchMime ? matchMime[1] : (file.type || 'image/jpeg');
@@ -582,7 +627,6 @@ async function processarOCR(event) {
             previewContainer.classList.remove('hidden');
         }
 
-        // 2) OCR: lê data, hora e valor do documento
         try {
             const res = await Tesseract.recognize(file, 'por');
             ocrTextoExtraido = res.data.text || '';
@@ -593,18 +637,18 @@ async function processarOCR(event) {
 
             document.getElementById('ocrData').value = dataDet;     // da foto
             document.getElementById('ocrHora').value = horaDet;      // da foto; vazio = manual
-            document.getElementById('ocrValor').value = valorDet;    // da foto
+            document.getElementById('ocrValor').value = valorDet;    // valor pago (picote/recibo)
             // Loja e Categoria permanecem VAZIAS (manuais por padrão)
 
             const faltantes = [];
             if (!dataDet) faltantes.push('data');
             if (!horaDet) faltantes.push('hora');
-            if (!valorDet) faltantes.push('valor');
+            if (!valorDet) faltantes.push('valor pago');
 
             if (faltantes.length > 0) {
                 showToast(`Não foi possível ler: ${faltantes.join(', ')}. Preencha manualmente. (Categoria e Loja são sempre manuais.)`, 'warning');
             } else {
-                showToast('Data, hora e valor lidos da foto. Confira e preencha Categoria e Loja.', 'success');
+                showToast('Data, hora e valor pago lidos da foto. Confira e preencha Categoria e Loja.', 'success');
             }
         } catch (erroOcr) {
             showToast('Falha na leitura automática (OCR). Preencha os dados manualmente.', 'warning');
@@ -625,11 +669,10 @@ async function salvarNotaNaCarteira() {
     const categoria = document.getElementById('ocrCategoria').value;
 
     if (!ocrImagemBase64) { showToast('Envie ou tire a foto do comprovante antes de guardar.', 'warning'); return; }
-    if (!valorRaw) { showToast('Informe o Valor da despesa.', 'warning'); return; }
+    if (!valorRaw) { showToast('Informe o Valor pago da despesa.', 'warning'); return; }
     if (!loja) { showToast('Informe a Sigla da Loja que será debitada!', 'warning'); return; }
     if (!categoria) { showToast('Selecione a Categoria da despesa.', 'warning'); return; }
 
-    // Data: usa a lida da foto; se não veio, fallback para hoje (evita gravar vazio)
     let dataDespesa = document.getElementById('ocrData').value.trim();
     if (!dataDespesa) dataDespesa = new Date().toLocaleDateString('pt-BR');
 
