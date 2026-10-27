@@ -14,7 +14,9 @@ let ocrImagemBase64 = '';
 let ocrMimeType = 'image/jpeg';
 let ocrTextoExtraido = '';
 
-// ==================== UTILITÁRIOS PARA DRIVE / COMPRUVANTE ====================
+// ==================== UTILITÁRIOS GERAIS ====================
+
+function pad2(n) { return String(n).padStart(2, '0'); }
 
 function escaparAtributoHtml(valor) {
     return String(valor || '')
@@ -24,6 +26,137 @@ function escaparAtributoHtml(valor) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
 }
+
+function formatarDataVisao(valor) {
+    const s = String(valor || '');
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+        const partes = s.slice(0, 10).split('-');
+        return `${partes[2]}/${partes[1]}/${partes[0]}`;
+    }
+    return s;
+}
+
+function chaveDataOrdenacao(valor) {
+    const s = String(valor || '');
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+        const p = s.split('/');
+        return new Date(`${p[2]}-${p[1]}-${p[0]}`);
+    }
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? new Date(0) : d;
+}
+
+// ==================== OCR: EXTRAÇÃO INTELIGENTE (DATA / HORA / VALOR) ====================
+
+// Normaliza um "bloco numérico" bruto (ex: "1.234,56", "12,34", "1234.56") para string float "1234.56" ou null
+function normalizarBlocoNumero(bloco) {
+    let s = String(bloco || '').replace(/\s+/g, '');
+    if (!/^\d[\d.,]*$/.test(s)) return null;
+
+    const lastComma = s.lastIndexOf(',');
+    const lastDot = s.lastIndexOf('.');
+    let intPart, decPart;
+
+    if (lastComma !== -1) {
+        // Formato BR: vírgula = decimal, pontos = milhar
+        intPart = s.slice(0, lastComma).replace(/\./g, '');
+        decPart = s.slice(lastComma + 1);
+        if (!/^\d{1,2}$/.test(decPart)) return null;
+    } else if (lastDot !== -1) {
+        const after = s.slice(lastDot + 1);
+        const dotsCount = (s.match(/\./g) || []).length;
+        if (dotsCount > 1) {
+            // Vários pontos = todos milhares, sem centavos
+            intPart = s.replace(/\./g, '');
+            decPart = '00';
+        } else if (/^\d{3}$/.test(after)) {
+            // Um ponto + 3 dígitos = milhar sem centavos
+            intPart = s.replace(/\./g, '');
+            decPart = '00';
+        } else if (/^\d{1,2}$/.test(after)) {
+            // Um ponto + 1~2 dígitos = decimal
+            intPart = s.slice(0, lastDot);
+            decPart = after;
+        } else {
+            return null;
+        }
+    } else {
+        // Só dígitos, sem separador decimal -> não tratamos como valor com centavos
+        return null;
+    }
+
+    intPart = intPart.replace(/^0+(?=\d)/, '');
+    if (intPart === '') intPart = '0';
+    decPart = (decPart + '00').slice(0, 2);
+    return intPart + '.' + decPart;
+}
+
+// Captura todos os blocos numéricos do texto (evita casar parciais de números maiores)
+function extrairTodosValores(texto) {
+    const blocos = String(texto || '').match(/\d[\d.,]*\d|\d/g) || [];
+    const vals = [];
+    for (const b of blocos) {
+        const n = normalizarBlocoNumero(b);
+        if (n !== null) vals.push(parseFloat(n));
+    }
+    return vals;
+}
+
+// Procura valor associado a palavras-chave de total (TOTAL, VALOR A PAGAR, etc.)
+function extrairValorPorKeyword(texto) {
+    const re = /(?:VALOR\s*(?:TOTAL|A\s*PAGAR|PAGO|TOTAIS?)|TOTAL|TTL|VL\s*TOT|SOMA)[^\d]{0,40}?(\d[\d.,]*\d|\d)/gi;
+    let m, best = null;
+    while ((m = re.exec(texto)) !== null) {
+        const n = normalizarBlocoNumero(m[1]);
+        if (n !== null) {
+            const v = parseFloat(n);
+            if (best === null || v > best) best = v;
+        }
+    }
+    return best;
+}
+
+// Valor final: prioriza keyword; senão, o maior valor com centavos do documento
+function extrairValorDoTexto(texto) {
+    const kw = extrairValorPorKeyword(texto);
+    if (kw !== null) return kw.toFixed(2);
+
+    const todos = extrairTodosValores(texto);
+    if (todos.length === 0) return '';
+    return Math.max.apply(null, todos).toFixed(2);
+}
+
+// Data: DD/MM/AAAA, DD/MM/AA, DD-MM-AAAA, DD.MM.AAAA e, como fallback, ISO AAAA-MM-DD
+function extrairDataDoTexto(texto) {
+    const t = String(texto || '');
+    const re = /\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/g;
+    let m;
+    while ((m = re.exec(t)) !== null) {
+        let d = parseInt(m[1], 10);
+        let mo = parseInt(m[2], 10);
+        let y = parseInt(m[3], 10);
+        if (m[3].length === 2) y = 2000 + y;
+        if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12 && y >= 2000 && y <= 2100) {
+            return `${pad2(d)}/${pad2(mo)}/${y}`;
+        }
+    }
+    const reIso = /\b(\d{4})-(\d{2})-(\d{2})\b/g;
+    if ((m = reIso.exec(t)) !== null) {
+        const y = +m[1], mo = +m[2], d = +m[3];
+        if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12) return `${pad2(d)}/${pad2(mo)}/${y}`;
+    }
+    return '';
+}
+
+// Hora: HH:MM ou HhMM (ex: 14:30, 9:05, 14h30). Se não achar, volta vazio (manual).
+function extrairHoraDoTexto(texto) {
+    const re = /\b([01]?\d|2[0-3])[:hH]([0-5]\d)\b/g;
+    const m = re.exec(String(texto || ''));
+    if (m) return `${pad2(parseInt(m[1], 10))}:${m[2]}`;
+    return '';
+}
+
+// ==================== UTILITÁRIOS PARA DRIVE / COMPRUVANTE ====================
 
 function extrairFileIdDrive(url) {
     const s = String(url || '');
@@ -100,25 +233,6 @@ function baixarComprovante(url) {
     link.remove();
 }
 
-function formatarDataVisao(valor) {
-    const s = String(valor || '');
-    if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
-        const partes = s.slice(0, 10).split('-');
-        return `${partes[2]}/${partes[1]}/${partes[0]}`;
-    }
-    return s;
-}
-
-function chaveDataOrdenacao(valor) {
-    const s = String(valor || '');
-    if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
-        const partes = s.split('/');
-        return new Date(`${partes[2]}-${partes[1]}-${partes[0]}`);
-    }
-    const d = new Date(s);
-    return isNaN(d.getTime()) ? new Date(0) : d;
-}
-
 // ==================== INICIALIZAÇÃO E SESSÃO ====================
 window.onload = () => {
     const savedUser = localStorage.getItem('usuarioDespesasAtivo');
@@ -132,7 +246,7 @@ window.onload = () => {
     }
 };
 
-// LOGOUT: não exibe alerta (apenas limpa sessão e volta para o login)
+// LOGOUT: não exibe alerta
 function logout() {
     localStorage.removeItem('usuarioDespesasAtivo');
     localStorage.removeItem('loginDespesasTimestamp');
@@ -216,7 +330,7 @@ function toggleAuthView(v) {
 
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    // LOGIN: não exibe alerta de boas-vindas ao sucesso
+    // LOGIN: sem alerta no sucesso
     const r = await fetchAPI({ action: 'login', login: document.getElementById('loginUser').value.trim(), senha: document.getElementById('loginSenha').value }, 'btnLogin', 'loginText', 'Acessar Despesas <i class="fa-solid fa-arrow-right-to-bracket ml-2"></i>');
     if (r && r.success) {
         localStorage.setItem('usuarioDespesasAtivo', JSON.stringify(r.user));
@@ -418,6 +532,13 @@ function abrirModalOCR() {
     document.getElementById('btnSalvarNota').classList.add('hidden');
     document.getElementById('fileOCR').value = "";
 
+    // Limpa campos do formulário a cada abertura
+    document.getElementById('ocrData').value = '';
+    document.getElementById('ocrHora').value = '';
+    document.getElementById('ocrValor').value = '';
+    document.getElementById('ocrLoja').value = '';
+    document.getElementById('ocrCategoria').value = '';
+
     ocrImagemBase64 = '';
     ocrMimeType = 'image/jpeg';
     ocrTextoExtraido = '';
@@ -434,6 +555,13 @@ async function processarOCR(event) {
 
     ocrTextoExtraido = '';
 
+    // Limpa antes de ler
+    document.getElementById('ocrData').value = '';
+    document.getElementById('ocrHora').value = '';
+    document.getElementById('ocrValor').value = '';
+    document.getElementById('ocrLoja').value = '';
+    document.getElementById('ocrCategoria').value = '';
+
     document.getElementById('ocrLoader').classList.remove('hidden');
     document.getElementById('ocrForm').classList.add('hidden');
     document.getElementById('btnSalvarNota').classList.add('hidden');
@@ -444,6 +572,7 @@ async function processarOCR(event) {
     if (preview) preview.src = '';
 
     try {
+        // 1) Prepara a imagem (base64 + redimensionamento) para envio ao Drive
         ocrImagemBase64 = await converterFileParaBase64(file);
         const matchMime = String(ocrImagemBase64).match(/^data:([^;]+);base64,/);
         ocrMimeType = matchMime ? matchMime[1] : (file.type || 'image/jpeg');
@@ -453,25 +582,32 @@ async function processarOCR(event) {
             previewContainer.classList.remove('hidden');
         }
 
+        // 2) OCR: lê data, hora e valor do documento
         try {
             const res = await Tesseract.recognize(file, 'por');
             ocrTextoExtraido = res.data.text || '';
-            const text = ocrTextoExtraido;
 
-            const horaMatch = text.match(/\b([0-1]?[0-9]|2[0-3]):[0-5][0-9]\b/);
-            const dataMatch = text.match(/\b\d{2}\/\d{2}\/\d{2,4}\b/);
-            const valorMatch = text.match(/(?:R\$|VALOR|TOTAL)?\s*(\d{1,3}(?:\.\d{3})*,\d{2})/i);
+            const dataDet = extrairDataDoTexto(ocrTextoExtraido);
+            const horaDet = extrairHoraDoTexto(ocrTextoExtraido);
+            const valorDet = extrairValorDoTexto(ocrTextoExtraido);
 
-            document.getElementById('ocrHora').value = horaMatch ? horaMatch[0] : '';
-            document.getElementById('ocrData').value = dataMatch ? dataMatch[0] : new Date().toLocaleDateString('pt-BR');
-            document.getElementById('ocrValor').value = valorMatch ? valorMatch[1].replace('.', '').replace(',', '.') : '';
-            document.getElementById('ocrLoja').value = '';
+            document.getElementById('ocrData').value = dataDet;     // da foto
+            document.getElementById('ocrHora').value = horaDet;      // da foto; vazio = manual
+            document.getElementById('ocrValor').value = valorDet;    // da foto
+            // Loja e Categoria permanecem VAZIAS (manuais por padrão)
 
-            atualizarCategoriaPorHorario();
-            showToast('Foto lida com sucesso! Confira e ajuste os dados.', 'success');
+            const faltantes = [];
+            if (!dataDet) faltantes.push('data');
+            if (!horaDet) faltantes.push('hora');
+            if (!valorDet) faltantes.push('valor');
+
+            if (faltantes.length > 0) {
+                showToast(`Não foi possível ler: ${faltantes.join(', ')}. Preencha manualmente. (Categoria e Loja são sempre manuais.)`, 'warning');
+            } else {
+                showToast('Data, hora e valor lidos da foto. Confira e preencha Categoria e Loja.', 'success');
+            }
         } catch (erroOcr) {
-            document.getElementById('ocrData').value = new Date().toLocaleDateString('pt-BR');
-            showToast('Não foi possível ler automaticamente. Você ainda pode salvar a foto e preencher manualmente.', 'warning');
+            showToast('Falha na leitura automática (OCR). Preencha os dados manualmente.', 'warning');
         }
     } catch (erroArquivo) {
         ocrImagemBase64 = '';
@@ -483,40 +619,31 @@ async function processarOCR(event) {
     }
 }
 
-function atualizarCategoriaPorHorario() {
-    const h = document.getElementById('ocrHora').value;
-    if (!h) return;
-    const [hrs, mins] = h.split(':').map(Number);
-    const mTotal = hrs * 60 + (mins || 0);
-
-    let cat = 'Outros';
-    if (mTotal >= 300 && mTotal <= 599) cat = 'Café da Manhã';
-    else if (mTotal >= 600 && mTotal <= 689) cat = 'Lanche da Manhã';
-    else if (mTotal >= 690 && mTotal <= 870) cat = 'Almoço';
-    else if (mTotal >= 871 && mTotal <= 1079) cat = 'Lanche da Tarde';
-    else if (mTotal >= 1080 && mTotal <= 1260) cat = 'Janta';
-    else if (mTotal >= 1261 || mTotal <= 299) cat = 'Lanche da Noite';
-
-    document.getElementById('ocrCategoria').value = cat;
-}
-
 async function salvarNotaNaCarteira() {
     const valorRaw = document.getElementById('ocrValor').value;
     const loja = document.getElementById('ocrLoja').value.trim();
+    const categoria = document.getElementById('ocrCategoria').value;
 
     if (!ocrImagemBase64) { showToast('Envie ou tire a foto do comprovante antes de guardar.', 'warning'); return; }
-    if (!valorRaw || !loja) { showToast('Informe o Valor e a Sigla da Loja que será debitada!', 'warning'); return; }
+    if (!valorRaw) { showToast('Informe o Valor da despesa.', 'warning'); return; }
+    if (!loja) { showToast('Informe a Sigla da Loja que será debitada!', 'warning'); return; }
+    if (!categoria) { showToast('Selecione a Categoria da despesa.', 'warning'); return; }
 
+    // Data: usa a lida da foto; se não veio, fallback para hoje (evita gravar vazio)
+    let dataDespesa = document.getElementById('ocrData').value.trim();
+    if (!dataDespesa) dataDespesa = new Date().toLocaleDateString('pt-BR');
+
+    const horaDespesa = document.getElementById('ocrHora').value.trim(); // pode ficar vazio (manual)
     const valorNumerico = parseFloat(String(valorRaw).replace(',', '.')) || 0;
 
     const data = {
         action: 'saveComprovante',
         login: userData.login,
-        dataDespesa: document.getElementById('ocrData').value,
-        horaDespesa: document.getElementById('ocrHora').value,
+        dataDespesa: dataDespesa,
+        horaDespesa: horaDespesa,
         valor: valorNumerico,
         lojaDebito: loja,
-        categoria: document.getElementById('ocrCategoria').value,
+        categoria: categoria,
         ocrConteudo: String(ocrTextoExtraido || '').slice(0, 5000),
         imagemBase64: ocrImagemBase64,
         mimeType: ocrMimeType
