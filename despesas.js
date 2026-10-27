@@ -27,24 +27,18 @@ function escaparAtributoHtml(valor) {
 
 function extrairFileIdDrive(url) {
     const s = String(url || '');
-
     const padraoFileD = s.match(/\/file\/d\/([^\/?&#]+)/);
     if (padraoFileD) return padraoFileD[1];
-
     const padraoIdParam = s.match(/[?&]id=([^&#]+)/);
     if (padraoIdParam) return padraoIdParam[1];
-
     const padraoDriveD = s.match(/\/d\/([^\/?&#]+)/);
     if (padraoDriveD) return padraoDriveD[1];
-
     return '';
 }
 
 function montarUrlThumbnailDrive(url) {
     const fileId = extrairFileIdDrive(url);
-    if (fileId) {
-        return `https://drive.google.com/thumbnail?id=${fileId}&sz=w200`;
-    }
+    if (fileId) return `https://drive.google.com/thumbnail?id=${fileId}&sz=w200`;
     return url;
 }
 
@@ -59,10 +53,7 @@ function lerFileComoDataUrl(file) {
 
 async function converterFileParaBase64(file) {
     const original = await lerFileComoDataUrl(file);
-
-    if (!file.type || !file.type.startsWith('image/')) {
-        return original;
-    }
+    if (!file.type || !file.type.startsWith('image/')) return original;
 
     try {
         const img = await new Promise((resolve, reject) => {
@@ -77,17 +68,14 @@ async function converterFileParaBase64(file) {
         const alturaReal = img.height || maxDimension;
         const maiorLado = Math.max(larguraReal, alturaReal);
         const escala = Math.min(1, maxDimension / maiorLado);
-
         const novaLargura = Math.max(1, Math.round(larguraReal * escala));
         const novaAltura = Math.max(1, Math.round(alturaReal * escala));
 
         const canvas = document.createElement('canvas');
         canvas.width = novaLargura;
         canvas.height = novaAltura;
-
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, novaLargura, novaAltura);
-
         return canvas.toDataURL('image/jpeg', 0.85);
     } catch (erro) {
         return original;
@@ -95,31 +83,18 @@ async function converterFileParaBase64(file) {
 }
 
 function abrirComprovante(url) {
-    if (!url) {
-        showToast('Este item não possui comprovante anexado.', 'warning');
-        return;
-    }
+    if (!url) { showToast('Este item não possui comprovante anexado.', 'warning'); return; }
     window.open(url, '_blank', 'noopener,noreferrer');
 }
 
 function baixarComprovante(url) {
-    if (!url) {
-        showToast('Este item não possui comprovante para download.', 'warning');
-        return;
-    }
-
+    if (!url) { showToast('Este item não possui comprovante para download.', 'warning'); return; }
     const fileId = extrairFileIdDrive(url);
-
-    if (!fileId) {
-        window.open(url, '_blank', 'noopener,noreferrer');
-        return;
-    }
-
+    if (!fileId) { window.open(url, '_blank', 'noopener,noreferrer'); return; }
     const link = document.createElement('a');
     link.href = `https://drive.google.com/uc?export=download&id=${fileId}`;
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
-
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -127,23 +102,19 @@ function baixarComprovante(url) {
 
 function formatarDataVisao(valor) {
     const s = String(valor || '');
-
     if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
         const partes = s.slice(0, 10).split('-');
         return `${partes[2]}/${partes[1]}/${partes[0]}`;
     }
-
     return s;
 }
 
 function chaveDataOrdenacao(valor) {
     const s = String(valor || '');
-
     if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
         const partes = s.split('/');
         return new Date(`${partes[2]}-${partes[1]}-${partes[0]}`);
     }
-
     const d = new Date(s);
     return isNaN(d.getTime()) ? new Date(0) : d;
 }
@@ -152,7 +123,7 @@ function chaveDataOrdenacao(valor) {
 window.onload = () => {
     const savedUser = localStorage.getItem('usuarioDespesasAtivo');
     const loginTime = localStorage.getItem('loginDespesasTimestamp');
-    
+
     if (savedUser && loginTime && (Date.now() - parseInt(loginTime) < TEMPO_SESSAO_MS)) {
         userData = JSON.parse(savedUser);
         iniciarSistema();
@@ -161,25 +132,53 @@ window.onload = () => {
     }
 };
 
+// LOGOUT: não exibe alerta (apenas limpa sessão e volta para o login)
 function logout() {
     localStorage.removeItem('usuarioDespesasAtivo');
     localStorage.removeItem('loginDespesasTimestamp');
     userData = null;
+    viagemAtual = null;
+    viagensGlobais = [];
+    carteiraGlobais = [];
     document.getElementById('globalHeader').classList.add('hidden');
     document.getElementById('mainContent').classList.add('hidden');
     document.getElementById('viagemDetalheView').classList.add('hidden');
     document.getElementById('authView').classList.remove('hidden');
 }
 
+// ==================== TOAST (ALERTA BONITO) ====================
 function showToast(message, type = 'info', title = null, duration = 4000) {
     const container = document.getElementById('toastContainer');
+    if (!container) return;
+
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
+    toast.setAttribute('role', 'alert');
+
     const icons = { success: 'fa-circle-check', error: 'fa-circle-xmark', warning: 'fa-triangle-exclamation', info: 'fa-circle-info' };
     const titles = { success: 'Sucesso', error: 'Erro', warning: 'Atenção', info: 'Informação' };
-    toast.innerHTML = `<div class="toast-icon"><i class="fa-solid ${icons[type]}"></i></div><div class="toast-content"><div class="toast-title">${title || titles[type]}</div><div class="toast-message">${message}</div></div><button class="toast-close" onclick="this.parentElement.remove()"><i class="fa-solid fa-xmark"></i></button>`;
+
+    toast.innerHTML = `
+        <div class="toast-icon"><i class="fa-solid ${icons[type] || icons.info}"></i></div>
+        <div class="toast-content">
+            <div class="toast-title">${title || titles[type] || titles.info}</div>
+            <div class="toast-message">${String(message || '')}</div>
+        </div>
+        <button class="toast-close" aria-label="Fechar"><i class="fa-solid fa-xmark"></i></button>
+        <div class="toast-progress" style="animation-duration:${duration}ms"></div>
+    `;
+
     container.appendChild(toast);
-    setTimeout(() => { toast.classList.add('hiding'); setTimeout(() => toast.remove(), 300); }, duration);
+
+    const fechar = () => {
+        if (toast.dataset.closing) return;
+        toast.dataset.closing = '1';
+        toast.classList.add('hiding');
+        setTimeout(() => toast.remove(), 300);
+    };
+
+    toast.querySelector('.toast-close').addEventListener('click', fechar);
+    setTimeout(fechar, duration);
 }
 
 function showConfirm(message, options = {}) {
@@ -197,7 +196,7 @@ function showConfirm(message, options = {}) {
 
 async function fetchAPI(data, btnId = null, textId = null, originalText = null) {
     const btn = btnId ? document.getElementById(btnId) : null;
-    if(btn) { btn.disabled = true; if(textId) document.getElementById(textId).innerHTML = '<span class="loader-small"></span> Aguarde...'; }
+    if (btn) { btn.disabled = true; if (textId) document.getElementById(textId).innerHTML = '<span class="loader-small"></span> Aguarde...'; }
     try {
         const response = await fetch(API_URL, { method: 'POST', body: JSON.stringify(data) });
         return await response.json();
@@ -205,32 +204,35 @@ async function fetchAPI(data, btnId = null, textId = null, originalText = null) 
         showToast('Erro de Conexão com o Banco.', 'error');
         return { success: false };
     } finally {
-        if(btn) { btn.disabled = false; if(textId) document.getElementById(textId).innerHTML = originalText; }
+        if (btn) { btn.disabled = false; if (textId) document.getElementById(textId).innerHTML = originalText; }
     }
 }
 
 // ==================== CONTROLE DE AUTH ====================
 function toggleAuthView(v) {
-    if(v==='register') { document.getElementById('loginSection').classList.add('hidden'); document.getElementById('registerSection').classList.remove('hidden'); }
+    if (v === 'register') { document.getElementById('loginSection').classList.add('hidden'); document.getElementById('registerSection').classList.remove('hidden'); }
     else { document.getElementById('registerSection').classList.add('hidden'); document.getElementById('loginSection').classList.remove('hidden'); }
 }
 
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
+    // LOGIN: não exibe alerta de boas-vindas ao sucesso
     const r = await fetchAPI({ action: 'login', login: document.getElementById('loginUser').value.trim(), senha: document.getElementById('loginSenha').value }, 'btnLogin', 'loginText', 'Acessar Despesas <i class="fa-solid fa-arrow-right-to-bracket ml-2"></i>');
-    if(r && r.success) {
+    if (r && r.success) {
         localStorage.setItem('usuarioDespesasAtivo', JSON.stringify(r.user));
         localStorage.setItem('loginDespesasTimestamp', Date.now().toString());
         userData = r.user;
         iniciarSistema();
-    } else { showToast(r.message || 'Credenciais incorretas', 'error'); }
+    } else {
+        showToast(r.message || 'Credenciais incorretas', 'error');
+    }
 });
 
 document.getElementById('registerForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const data = { action: 'register', nome: document.getElementById('regNome').value, sobrenome: document.getElementById('regSobrenome').value, equipe: document.getElementById('regEquipe').value, nivel: document.getElementById('regNivel').value, senha: document.getElementById('regSenha').value };
     const r = await fetchAPI(data, 'btnRegister', 'regText', '<i class="fa-solid fa-save mr-2"></i> Cadastrar');
-    if(r && r.success) { showToast(`Usuário criado: ${r.login}`, 'success'); toggleAuthView('login'); }
+    if (r && r.success) { showToast(`Usuário criado: ${r.login}`, 'success'); toggleAuthView('login'); }
     else showToast(r.message, 'error');
 });
 
@@ -239,7 +241,7 @@ function iniciarSistema() {
     document.getElementById('authView').classList.add('hidden');
     document.getElementById('globalHeader').classList.remove('hidden');
     document.getElementById('mainContent').classList.remove('hidden');
-    
+
     document.getElementById('navUserName').textContent = `${userData.nome} ${userData.sobrenome}`;
     document.getElementById('navUserRole').textContent = `${userData.nivel}`;
 
@@ -251,7 +253,7 @@ async function recarregarDashboard() {
     document.getElementById('mainContent').classList.remove('hidden');
 
     const isGestao = (userData.nivel === 'Coordenação GS' || userData.nivel === 'Gerência GS');
-    
+
     document.getElementById('dashTitle').innerHTML = isGestao ? `<i class="fa-solid fa-user-shield text-emerald-600 mr-2"></i> Painel da Gestão` : `<i class="fa-solid fa-plane-departure text-emerald-600 mr-2"></i> Minhas Viagens`;
     document.getElementById('dashSubtitle').textContent = isGestao ? "Acompanhe e autorize reembolsos organizados por sigla da loja." : "Receba viagens criadas pela coordenação e envie seus comprovantes.";
 
@@ -267,7 +269,6 @@ async function recarregarDashboard() {
         carregarCarteiraSuporte();
     }
 
-    // Busca viagens no banco
     const r = await fetchAPI({ action: 'getDespesasViagens', login: userData.login, nivel: userData.nivel });
     if (r && r.success) {
         viagensGlobais = r.viagens;
@@ -280,10 +281,8 @@ async function recarregarDashboard() {
 function renderFiltrosSiglas() {
     const div = document.getElementById('filtroSiglasLojas');
     div.innerHTML = '';
-    
     const siglas = ["TODAS"];
-    viagensGlobais.forEach(v => { if(!siglas.includes(v.sigla)) siglas.push(v.sigla); });
-
+    viagensGlobais.forEach(v => { if (!siglas.includes(v.sigla)) siglas.push(v.sigla); });
     siglas.forEach(s => {
         const active = (filtroLojaSelecionada === s) ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-slate-100 border';
         div.innerHTML += `<button onclick="filtrarPorLoja('${s}')" class="${active} px-4 py-1.5 rounded-full font-bold text-xs shadow-sm transition uppercase whitespace-nowrap">${s}</button>`;
@@ -301,22 +300,22 @@ function renderViagensGrid() {
     grid.innerHTML = '';
 
     let lista = viagensGlobais;
-    if(filtroLojaSelecionada !== "TODAS") {
+    if (filtroLojaSelecionada !== "TODAS") {
         lista = lista.filter(v => v.sigla === filtroLojaSelecionada);
     }
 
-    if(lista.length === 0) {
+    if (lista.length === 0) {
         grid.innerHTML = `<div class="col-span-full text-center py-10 bg-white border border-dashed rounded text-slate-400"><i class="fa-solid fa-folder-open text-3xl mb-2"></i><br>Nenhuma viagem encontrada para este filtro.</div>`;
         return;
     }
 
     lista.forEach(v => {
         let badge = 'bg-slate-100 text-slate-600';
-        if(v.status === 'ABERTO') badge = 'bg-blue-100 text-blue-700 border-blue-200';
-        if(v.status === 'PENDENTE') badge = 'bg-amber-100 text-amber-700 border-amber-200';
-        if(v.status === 'SOLICITAR CORRECAO') badge = 'bg-red-100 text-red-700 border-red-200';
-        if(v.status === 'FECHADA' || v.status === 'ARQUIVADA') badge = 'bg-emerald-100 text-emerald-700 border-emerald-200';
-        if(v.status === 'CANCELADO') badge = 'bg-slate-200 text-slate-500 line-through';
+        if (v.status === 'ABERTO') badge = 'bg-blue-100 text-blue-700 border-blue-200';
+        if (v.status === 'PENDENTE') badge = 'bg-amber-100 text-amber-700 border-amber-200';
+        if (v.status === 'SOLICITAR CORRECAO') badge = 'bg-red-100 text-red-700 border-red-200';
+        if (v.status === 'FECHADA' || v.status === 'ARQUIVADA') badge = 'bg-emerald-100 text-emerald-700 border-emerald-200';
+        if (v.status === 'CANCELADO') badge = 'bg-slate-200 text-slate-500 line-through';
 
         grid.innerHTML += `
             <div onclick="abrirViagemDetalhe('${v.idViagem}')" class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-400 cursor-pointer transition flex flex-col justify-between">
@@ -339,11 +338,10 @@ function renderViagensGrid() {
     });
 }
 
-
 // ==================== FLUXO DA COORDENAÇÃO ====================
 async function carregarUsuariosParaSelect() {
     const r = await fetchAPI({ action: 'getUsers' });
-    if(r.success) {
+    if (r.success) {
         const sel = document.getElementById('novaViagemColaborador');
         sel.innerHTML = '<option value="">Selecione o técnico...</option>';
         r.users.forEach(u => { sel.innerHTML += `<option value="${u.login}">${u.nome} (${u.login})</option>`; });
@@ -357,7 +355,7 @@ async function confirmarCriarViagem() {
     const motivo = document.getElementById('novaViagemMotivo').value.trim();
     const colab = document.getElementById('novaViagemColaborador').value;
 
-    if(!sigla || !motivo || !colab) { showToast('Preencha a sigla, o motivo e o colaborador!', 'warning'); return; }
+    if (!sigla || !motivo || !colab) { showToast('Preencha a sigla, o motivo e o colaborador!', 'warning'); return; }
 
     const r = await fetchAPI({
         action: 'createDespesaViagem',
@@ -368,7 +366,7 @@ async function confirmarCriarViagem() {
         nivel: userData.nivel
     }, 'btnCriarViagem');
 
-    if(r.success) {
+    if (r.success) {
         document.getElementById('modalCriarViagem').classList.add('hidden');
         showToast('Viagem gerada e enviada ao colaborador!', 'success');
         recarregarDashboard();
@@ -377,18 +375,17 @@ async function confirmarCriarViagem() {
     }
 }
 
-
 // ==================== FLUXO DO SUPORTE (CARTEIRA E OCR) ====================
 async function carregarCarteiraSuporte() {
     const r = await fetchAPI({ action: 'getCarteiraComprovantes', login: userData.login });
     const tb = document.getElementById('tbCarteira');
     tb.innerHTML = '';
 
-    if(r && r.success) {
+    if (r && r.success) {
         carteiraGlobais = r.comprovantes;
-        if(r.apagadosPorValidade > 0) showToast(`${r.apagadosPorValidade} comprovante(s) foram apagados após 30 dias sem uso.`, 'info');
+        if (r.apagadosPorValidade > 0) showToast(`${r.apagadosPorValidade} comprovante(s) foram apagados após 30 dias sem uso.`, 'info');
 
-        if(carteiraGlobais.length === 0) {
+        if (carteiraGlobais.length === 0) {
             tb.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-slate-400">Nenhum comprovante guardado na carteira.</td></tr>';
             return;
         }
@@ -402,7 +399,7 @@ async function carregarCarteiraSuporte() {
                     <td class="px-4 py-3 text-xs font-mono">${formatarDataVisao(c.dataDespesa)} às ${c.horaDespesa || ''}</td>
                     <td class="px-4 py-3 text-xs font-bold text-slate-700">${c.categoria || ''}</td>
                     <td class="px-4 py-3 text-xs font-bold uppercase text-slate-500">${c.lojaDebito || ''}</td>
-                    <td class="px-4 py-3 text-xs font-bold text-emerald-600">R$ ${Number(c.valor || 0).toFixed(2).replace('.',',')}</td>
+                    <td class="px-4 py-3 text-xs font-bold text-emerald-600">R$ ${Number(c.valor || 0).toFixed(2).replace('.', ',')}</td>
                     <td class="px-4 py-3 text-xs text-center">
                         <div class="flex flex-col items-center gap-1">
                             <span class="text-amber-600 font-bold">${diasVenc} dia(s) restante(s)</span>
@@ -427,14 +424,13 @@ function abrirModalOCR() {
 
     const previewContainer = document.getElementById('ocrPreviewContainer');
     const preview = document.getElementById('ocrPreview');
-
     if (previewContainer) previewContainer.classList.add('hidden');
     if (preview) preview.src = '';
 }
 
 async function processarOCR(event) {
     const file = event.target.files[0];
-    if(!file) return;
+    if (!file) return;
 
     ocrTextoExtraido = '';
 
@@ -444,13 +440,11 @@ async function processarOCR(event) {
 
     const previewContainer = document.getElementById('ocrPreviewContainer');
     const preview = document.getElementById('ocrPreview');
-
     if (previewContainer) previewContainer.classList.add('hidden');
     if (preview) preview.src = '';
 
     try {
         ocrImagemBase64 = await converterFileParaBase64(file);
-
         const matchMime = String(ocrImagemBase64).match(/^data:([^;]+);base64,/);
         ocrMimeType = matchMime ? matchMime[1] : (file.type || 'image/jpeg');
 
@@ -462,7 +456,6 @@ async function processarOCR(event) {
         try {
             const res = await Tesseract.recognize(file, 'por');
             ocrTextoExtraido = res.data.text || '';
-
             const text = ocrTextoExtraido;
 
             const horaMatch = text.match(/\b([0-1]?[0-9]|2[0-3]):[0-5][0-9]\b/);
@@ -475,7 +468,6 @@ async function processarOCR(event) {
             document.getElementById('ocrLoja').value = '';
 
             atualizarCategoriaPorHorario();
-
             showToast('Foto lida com sucesso! Confira e ajuste os dados.', 'success');
         } catch (erroOcr) {
             document.getElementById('ocrData').value = new Date().toLocaleDateString('pt-BR');
@@ -493,17 +485,17 @@ async function processarOCR(event) {
 
 function atualizarCategoriaPorHorario() {
     const h = document.getElementById('ocrHora').value;
-    if(!h) return;
+    if (!h) return;
     const [hrs, mins] = h.split(':').map(Number);
     const mTotal = hrs * 60 + (mins || 0);
 
     let cat = 'Outros';
-    if(mTotal >= 300 && mTotal <= 599) cat = 'Café da Manhã';       // 05:00 - 09:59
-    else if(mTotal >= 600 && mTotal <= 689) cat = 'Lanche da Manhã';  // 10:00 - 11:29
-    else if(mTotal >= 690 && mTotal <= 870) cat = 'Almoço';           // 11:30 - 14:30
-    else if(mTotal >= 871 && mTotal <= 1079) cat = 'Lanche da Tarde'; // 14:31 - 17:59
-    else if(mTotal >= 1080 && mTotal <= 1260) cat = 'Janta';          // 18:00 - 21:00
-    else if(mTotal >= 1261 || mTotal <= 299) cat = 'Lanche da Noite'; // 21:01 - 04:59
+    if (mTotal >= 300 && mTotal <= 599) cat = 'Café da Manhã';
+    else if (mTotal >= 600 && mTotal <= 689) cat = 'Lanche da Manhã';
+    else if (mTotal >= 690 && mTotal <= 870) cat = 'Almoço';
+    else if (mTotal >= 871 && mTotal <= 1079) cat = 'Lanche da Tarde';
+    else if (mTotal >= 1080 && mTotal <= 1260) cat = 'Janta';
+    else if (mTotal >= 1261 || mTotal <= 299) cat = 'Lanche da Noite';
 
     document.getElementById('ocrCategoria').value = cat;
 }
@@ -512,15 +504,8 @@ async function salvarNotaNaCarteira() {
     const valorRaw = document.getElementById('ocrValor').value;
     const loja = document.getElementById('ocrLoja').value.trim();
 
-    if (!ocrImagemBase64) {
-        showToast('Envie ou tire a foto do comprovante antes de guardar.', 'warning');
-        return;
-    }
-
-    if (!valorRaw || !loja) {
-        showToast('Informe o Valor e a Sigla da Loja que será debitada!', 'warning');
-        return;
-    }
+    if (!ocrImagemBase64) { showToast('Envie ou tire a foto do comprovante antes de guardar.', 'warning'); return; }
+    if (!valorRaw || !loja) { showToast('Informe o Valor e a Sigla da Loja que será debitada!', 'warning'); return; }
 
     const valorNumerico = parseFloat(String(valorRaw).replace(',', '.')) || 0;
 
@@ -541,28 +526,22 @@ async function salvarNotaNaCarteira() {
 
     if (r && r.success) {
         document.getElementById('modalOCR').classList.add('hidden');
-
-        if (r.urlComprovante) {
-            showToast('Comprovante e imagem salvos no Google Drive!', 'success');
-        } else {
-            showToast('Comprovante salvo, mas a imagem não foi anexada ao Drive. Verifique permissões/publicação.', 'warning');
-        }
+        if (r.urlComprovante) showToast('Comprovante e imagem salvos no Google Drive!', 'success');
+        else showToast('Comprovante salvo, mas a imagem não foi anexada ao Drive. Verifique permissões/publicação.', 'warning');
 
         ocrImagemBase64 = '';
         ocrMimeType = 'image/jpeg';
         ocrTextoExtraido = '';
-
         carregarCarteiraSuporte();
     } else {
         showToast(r.message || 'Falha ao salvar comprovante.', 'error');
     }
 }
 
-
 // ==================== VISUALIZAÇÃO DETALHADA E PRESTAÇÃO DE CONTAS ====================
 function abrirViagemDetalhe(id) {
     viagemAtual = viagensGlobais.find(v => v.idViagem === id);
-    if(!viagemAtual) return;
+    if (!viagemAtual) return;
 
     document.getElementById('mainContent').classList.add('hidden');
     document.getElementById('viagemDetalheView').classList.remove('hidden');
@@ -571,11 +550,10 @@ function abrirViagemDetalhe(id) {
     document.getElementById('detalheMotivo').textContent = viagemAtual.motivo;
     document.getElementById('detalheParticipantes').textContent = `Solicitado por: ${viagemAtual.criadoPor} | Responsável: ${viagemAtual.colaborador}`;
 
-    // Badge Status
     let badge = 'bg-slate-800 text-white';
-    if(viagemAtual.status === 'PENDENTE') badge = 'bg-amber-500 text-white';
-    if(viagemAtual.status === 'FECHADA' || viagemAtual.status === 'ARQUIVADA') badge = 'bg-emerald-500 text-white';
-    if(viagemAtual.status === 'SOLICITAR CORRECAO') badge = 'bg-red-500 text-white';
+    if (viagemAtual.status === 'PENDENTE') badge = 'bg-amber-500 text-white';
+    if (viagemAtual.status === 'FECHADA' || viagemAtual.status === 'ARQUIVADA') badge = 'bg-emerald-500 text-white';
+    if (viagemAtual.status === 'SOLICITAR CORRECAO') badge = 'bg-red-500 text-white';
     document.getElementById('detalheStatusBadge').innerHTML = `<span class="${badge} font-bold px-4 py-1.5 rounded text-xs uppercase shadow">${viagemAtual.status}</span>`;
 
     renderAcoesViagem();
@@ -589,19 +567,17 @@ function renderAcoesViagem() {
     const isGestao = (userData.nivel === 'Coordenação GS' || userData.nivel === 'Gerência GS');
     const isColab = (String(viagemAtual.colaborador).toLowerCase() === String(userData.login).toLowerCase());
 
-    // AÇÕES DO TÉCNICO (SUPORTE)
     if (isColab && (viagemAtual.status === 'ABERTO' || viagemAtual.status === 'SOLICITAR CORRECAO')) {
         area.innerHTML += `
             <button onclick="abrirModalAnexarTickets()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-paperclip mr-2"></i> Inserir Tickets Guardados</button>
         `;
-        if(viagemAtual.itens.length > 0) {
+        if (viagemAtual.itens.length > 0) {
             area.innerHTML += `
                 <button onclick="enviarDespesasViagem()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-4 rounded shadow ml-auto"><i class="fa-solid fa-paper-plane mr-2"></i> Enviar Despesas da Viagem</button>
             `;
         }
     }
 
-    // AÇÕES DA COORDENAÇÃO E GERÊNCIA
     if (isGestao) {
         if (viagemAtual.status === 'PENDENTE') {
             area.innerHTML += `
@@ -633,7 +609,6 @@ function renderItensViagem() {
         return;
     }
 
-    // ORDENAR POR DATA CRESCENTE
     viagemAtual.itens.sort((a, b) => chaveDataOrdenacao(a.dataDespesa) - chaveDataOrdenacao(b.dataDespesa));
 
     viagemAtual.itens.forEach(item => {
@@ -650,36 +625,13 @@ function renderItensViagem() {
             if (item.urlComprovante) {
                 const thumb = montarUrlThumbnailDrive(item.urlComprovante);
                 const urlHtml = escaparAtributoHtml(item.urlComprovante);
-
                 celulaComprovante = `
                     <td class="px-4 py-3 text-xs">
                         <div class="flex items-center gap-3">
-                            <img
-                                src="${thumb}"
-                                alt="Comprovante"
-                                loading="lazy"
-                                class="h-12 w-12 object-cover rounded border cursor-pointer bg-slate-100"
-                                data-url="${urlHtml}"
-                                onclick="abrirComprovante(this.dataset.url)"
-                                onerror="this.style.display='none'"
-                            >
+                            <img src="${thumb}" alt="Comprovante" loading="lazy" class="h-12 w-12 object-cover rounded border cursor-pointer bg-slate-100" data-url="${urlHtml}" onclick="abrirComprovante(this.dataset.url)" onerror="this.style.display='none'">
                             <div class="flex flex-col gap-1">
-                                <button
-                                    type="button"
-                                    class="text-[10px] font-bold text-blue-600 hover:text-blue-800"
-                                    data-url="${urlHtml}"
-                                    onclick="abrirComprovante(this.dataset.url)"
-                                >
-                                    <i class="fa-solid fa-eye mr-1"></i> Ver
-                                </button>
-                                <button
-                                    type="button"
-                                    class="text-[10px] font-bold text-emerald-600 hover:text-emerald-800"
-                                    data-url="${urlHtml}"
-                                    onclick="baixarComprovante(this.dataset.url)"
-                                >
-                                    <i class="fa-solid fa-download mr-1"></i> Baixar
-                                </button>
+                                <button type="button" class="text-[10px] font-bold text-blue-600 hover:text-blue-800" data-url="${urlHtml}" onclick="abrirComprovante(this.dataset.url)"><i class="fa-solid fa-eye mr-1"></i> Ver</button>
+                                <button type="button" class="text-[10px] font-bold text-emerald-600 hover:text-emerald-800" data-url="${urlHtml}" onclick="baixarComprovante(this.dataset.url)"><i class="fa-solid fa-download mr-1"></i> Baixar</button>
                             </div>
                         </div>
                     </td>
@@ -695,9 +647,7 @@ function renderItensViagem() {
                 <td class="px-4 py-3 text-xs font-mono">${item.horaDespesa || ''}</td>
                 <td class="px-4 py-3 text-xs font-bold text-slate-700">${item.categoria || ''}</td>
                 <td class="px-4 py-3 text-xs uppercase font-bold text-slate-500">${item.lojaDebito || ''}</td>
-                <td class="px-4 py-3 text-xs text-right font-bold text-emerald-600">
-                    R$ ${Number(item.valor || 0).toFixed(2).replace('.', ',')}
-                </td>
+                <td class="px-4 py-3 text-xs text-right font-bold text-emerald-600">R$ ${Number(item.valor || 0).toFixed(2).replace('.', ',')}</td>
                 ${celulaComprovante}
                 <td class="px-4 py-3 text-xs text-center">${btnAcao}</td>
             </tr>
@@ -712,7 +662,7 @@ async function abrirModalAnexarTickets() {
     const div = document.getElementById('listaTicketsDisponiveis');
     div.innerHTML = '';
 
-    if(r && r.success && r.comprovantes.length > 0) {
+    if (r && r.success && r.comprovantes.length > 0) {
         r.comprovantes.forEach(c => {
             const temFoto = !!c.urlComprovante;
             div.innerHTML += `
@@ -734,17 +684,10 @@ async function abrirModalAnexarTickets() {
 async function confirmarAnexoTickets() {
     const checks = document.querySelectorAll('.chk-ticket:checked');
     const ids = Array.from(checks).map(c => c.value);
+    if (ids.length === 0) { showToast('Selecione ao menos um ticket!', 'warning'); return; }
 
-    if(ids.length === 0) { showToast('Selecione ao menos um ticket!', 'warning'); return; }
-
-    const r = await fetchAPI({
-        action: 'linkComprovantesToViagem',
-        idViagem: viagemAtual.idViagem,
-        comprovantesIds: ids,
-        login: userData.login
-    }, 'btnConfirmarAnexos');
-
-    if(r.success) {
+    const r = await fetchAPI({ action: 'linkComprovantesToViagem', idViagem: viagemAtual.idViagem, comprovantesIds: ids, login: userData.login }, 'btnConfirmarAnexos');
+    if (r.success) {
         document.getElementById('modalAnexarTickets').classList.add('hidden');
         showToast('Tickets vinculados à viagem!', 'success');
         recarregarDashboard();
@@ -754,74 +697,30 @@ async function confirmarAnexoTickets() {
 }
 
 async function removerItemViagem(idComp) {
-    if(!await showConfirm("Devolver este ticket para sua carteira temporária?")) return;
-
-    const r = await fetchAPI({
-        action: 'removeComprovanteFromViagem',
-        idComprovante: idComp,
-        login: userData.login
-    });
-
-    if(r.success) {
-        showToast('Ticket removido.', 'info');
-        recarregarDashboard();
-    } else {
-        showToast(r.message || 'Não foi possível remover o ticket.', 'error');
-    }
+    if (!await showConfirm("Devolver este ticket para sua carteira temporária?")) return;
+    const r = await fetchAPI({ action: 'removeComprovanteFromViagem', idComprovante: idComp, login: userData.login });
+    if (r.success) { showToast('Ticket removido.', 'info'); recarregarDashboard(); }
+    else showToast(r.message || 'Não foi possível remover o ticket.', 'error');
 }
 
 async function enviarDespesasViagem() {
-    if(!await showConfirm("Enviar todas as despesas para a coordenação aprovar?", { type: 'info' })) return;
-
-    const r = await fetchAPI({
-        action: 'updateDespesaStatus',
-        idViagem: viagemAtual.idViagem,
-        status: 'PENDENTE',
-        login: userData.login,
-        nivel: userData.nivel
-    });
-
-    if(r.success) {
-        showToast('Prestação enviada com sucesso!', 'success');
-        recarregarDashboard();
-    } else {
-        showToast(r.message || 'Falha ao enviar prestação.', 'error');
-    }
+    if (!await showConfirm("Enviar todas as despesas para a coordenação aprovar?", { type: 'info' })) return;
+    const r = await fetchAPI({ action: 'updateDespesaStatus', idViagem: viagemAtual.idViagem, status: 'PENDENTE', login: userData.login, nivel: userData.nivel });
+    if (r.success) { showToast('Prestação enviada com sucesso!', 'success'); recarregarDashboard(); }
+    else showToast(r.message || 'Falha ao enviar prestação.', 'error');
 }
 
 async function alterarStatusViagem(novoStatus) {
-    const r = await fetchAPI({
-        action: 'updateDespesaStatus',
-        idViagem: viagemAtual.idViagem,
-        status: novoStatus,
-        login: userData.login,
-        nivel: userData.nivel
-    });
-
-    if(r.success) {
-        showToast(`Status alterado para ${novoStatus}!`, 'success');
-        recarregarDashboard();
-    } else {
-        showToast(r.message || 'Falha ao alterar status.', 'error');
-    }
+    const r = await fetchAPI({ action: 'updateDespesaStatus', idViagem: viagemAtual.idViagem, status: novoStatus, login: userData.login, nivel: userData.nivel });
+    if (r.success) { showToast(`Status alterado para ${novoStatus}!`, 'success'); recarregarDashboard(); }
+    else showToast(r.message || 'Falha ao alterar status.', 'error');
 }
 
 async function excluirViagem() {
-    if(!await showConfirm("Excluir esta viagem permanentemente?", { type: 'danger' })) return;
-
-    const r = await fetchAPI({
-        action: 'deleteDespesaViagem',
-        idViagem: viagemAtual.idViagem,
-        login: userData.login,
-        nivel: userData.nivel
-    });
-
-    if(r.success) {
-        showToast('Viagem excluída.', 'success');
-        recarregarDashboard();
-    } else {
-        showToast(r.message || 'Falha ao excluir viagem.', 'error');
-    }
+    if (!await showConfirm("Excluir esta viagem permanentemente?", { type: 'danger' })) return;
+    const r = await fetchAPI({ action: 'deleteDespesaViagem', idViagem: viagemAtual.idViagem, login: userData.login, nivel: userData.nivel });
+    if (r.success) { showToast('Viagem excluída.', 'success'); recarregarDashboard(); }
+    else showToast(r.message || 'Falha ao excluir viagem.', 'error');
 }
 
 function voltarDashboard() { recarregarDashboard(); }
@@ -831,10 +730,10 @@ function abrirModalRecuperar() { document.getElementById('modalRecuperar').class
 let userRecupLogin = null;
 async function buscarUsuariosRecup() {
     const q = document.getElementById('recupLoginInput').value;
-    if(q.length < 2) return;
+    if (q.length < 2) return;
     const r = await fetchAPI({ action: 'searchUsers', query: q });
     const div = document.getElementById('recupListaUsers'); div.innerHTML = '';
-    if(r.success) {
+    if (r.success) {
         r.users.forEach(u => {
             div.innerHTML += `<button onclick="selecionarUserRecup('${u.login}', '${u.nome}')" class="w-full text-left p-2 border-b text-xs hover:bg-emerald-50"><b>${u.nome}</b> (${u.login})</button>`;
         });
@@ -849,7 +748,7 @@ function selecionarUserRecup(login, nome) {
 async function confirmarRedefinirSenha() {
     const nova = document.getElementById('recupNovaSenha').value;
     const r = await fetchAPI({ action: 'resetPassword', login: userRecupLogin, novaSenha: nova }, 'btnRedefinir');
-    if(r.success) {
+    if (r.success) {
         showToast('Senha redefinida com sucesso!', 'success');
         document.getElementById('modalRecuperar').classList.add('hidden');
     } else {
