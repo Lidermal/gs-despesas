@@ -9,6 +9,145 @@ let carteiraGlobais = [];
 let viagemAtual = null;
 let filtroLojaSelecionada = "TODAS";
 
+// Variáveis para OCR + Upload de imagem
+let ocrImagemBase64 = '';
+let ocrMimeType = 'image/jpeg';
+let ocrTextoExtraido = '';
+
+// ==================== UTILITÁRIOS PARA DRIVE / COMPRUVANTE ====================
+
+function escaparAtributoHtml(valor) {
+    return String(valor || '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function extrairFileIdDrive(url) {
+    const s = String(url || '');
+
+    const padraoFileD = s.match(/\/file\/d\/([^\/?&#]+)/);
+    if (padraoFileD) return padraoFileD[1];
+
+    const padraoIdParam = s.match(/[?&]id=([^&#]+)/);
+    if (padraoIdParam) return padraoIdParam[1];
+
+    const padraoDriveD = s.match(/\/d\/([^\/?&#]+)/);
+    if (padraoDriveD) return padraoDriveD[1];
+
+    return '';
+}
+
+function montarUrlThumbnailDrive(url) {
+    const fileId = extrairFileIdDrive(url);
+    if (fileId) {
+        return `https://drive.google.com/thumbnail?id=${fileId}&sz=w200`;
+    }
+    return url;
+}
+
+function lerFileComoDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+    });
+}
+
+async function converterFileParaBase64(file) {
+    const original = await lerFileComoDataUrl(file);
+
+    if (!file.type || !file.type.startsWith('image/')) {
+        return original;
+    }
+
+    try {
+        const img = await new Promise((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => resolve(image);
+            image.onerror = reject;
+            image.src = original;
+        });
+
+        const maxDimension = 1600;
+        const larguraReal = img.width || maxDimension;
+        const alturaReal = img.height || maxDimension;
+        const maiorLado = Math.max(larguraReal, alturaReal);
+        const escala = Math.min(1, maxDimension / maiorLado);
+
+        const novaLargura = Math.max(1, Math.round(larguraReal * escala));
+        const novaAltura = Math.max(1, Math.round(alturaReal * escala));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = novaLargura;
+        canvas.height = novaAltura;
+
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, novaLargura, novaAltura);
+
+        return canvas.toDataURL('image/jpeg', 0.85);
+    } catch (erro) {
+        return original;
+    }
+}
+
+function abrirComprovante(url) {
+    if (!url) {
+        showToast('Este item não possui comprovante anexado.', 'warning');
+        return;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+function baixarComprovante(url) {
+    if (!url) {
+        showToast('Este item não possui comprovante para download.', 'warning');
+        return;
+    }
+
+    const fileId = extrairFileIdDrive(url);
+
+    if (!fileId) {
+        window.open(url, '_blank', 'noopener,noreferrer');
+        return;
+    }
+
+    const link = document.createElement('a');
+    link.href = `https://drive.google.com/uc?export=download&id=${fileId}`;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+}
+
+function formatarDataVisao(valor) {
+    const s = String(valor || '');
+
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+        const partes = s.slice(0, 10).split('-');
+        return `${partes[2]}/${partes[1]}/${partes[0]}`;
+    }
+
+    return s;
+}
+
+function chaveDataOrdenacao(valor) {
+    const s = String(valor || '');
+
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+        const partes = s.split('/');
+        return new Date(`${partes[2]}-${partes[1]}-${partes[0]}`);
+    }
+
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? new Date(0) : d;
+}
+
 // ==================== INICIALIZAÇÃO E SESSÃO ====================
 window.onload = () => {
     const savedUser = localStorage.getItem('usuarioDespesasAtivo');
@@ -120,6 +259,7 @@ async function recarregarDashboard() {
     btnArea.innerHTML = '';
 
     if (isGestao) {
+        document.getElementById('secaoCarteiraSuporte').classList.add('hidden');
         btnArea.innerHTML = `<button onclick="abrirModalCriarViagem()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded shadow text-sm transition"><i class="fa-solid fa-plus mr-2"></i> Criar Número da Viagem</button>`;
         carregarUsuariosParaSelect();
     } else {
@@ -219,11 +359,21 @@ async function confirmarCriarViagem() {
 
     if(!sigla || !motivo || !colab) { showToast('Preencha a sigla, o motivo e o colaborador!', 'warning'); return; }
 
-    const r = await fetchAPI({ action: 'createDespesaViagem', sigla: sigla, motivo: motivo, colaborador: colab, criadoPor: userData.login }, 'btnCriarViagem');
+    const r = await fetchAPI({
+        action: 'createDespesaViagem',
+        sigla: sigla,
+        motivo: motivo,
+        colaborador: colab,
+        criadoPor: userData.login,
+        nivel: userData.nivel
+    }, 'btnCriarViagem');
+
     if(r.success) {
         document.getElementById('modalCriarViagem').classList.add('hidden');
         showToast('Viagem gerada e enviada ao colaborador!', 'success');
         recarregarDashboard();
+    } else {
+        showToast(r.message || 'Não foi possível criar a viagem.', 'error');
     }
 }
 
@@ -245,13 +395,20 @@ async function carregarCarteiraSuporte() {
 
         carteiraGlobais.forEach(c => {
             const diasVenc = 30 - Math.floor((new Date() - new Date(c.dataUpload)) / (1000 * 60 * 60 * 24));
+            const temFoto = !!c.urlComprovante;
+
             tb.innerHTML += `
                 <tr class="hover:bg-slate-50 border-b">
-                    <td class="px-4 py-3 text-xs font-mono">${c.dataDespesa} às ${c.horaDespesa}</td>
-                    <td class="px-4 py-3 text-xs font-bold text-slate-700">${c.categoria}</td>
-                    <td class="px-4 py-3 text-xs font-bold uppercase text-slate-500">${c.lojaDebito}</td>
-                    <td class="px-4 py-3 text-xs font-bold text-emerald-600">R$ ${Number(c.valor).toFixed(2).replace('.',',')}</td>
-                    <td class="px-4 py-3 text-xs text-center text-amber-600 font-bold">${diasVenc} dia(s) restante(s)</td>
+                    <td class="px-4 py-3 text-xs font-mono">${formatarDataVisao(c.dataDespesa)} às ${c.horaDespesa || ''}</td>
+                    <td class="px-4 py-3 text-xs font-bold text-slate-700">${c.categoria || ''}</td>
+                    <td class="px-4 py-3 text-xs font-bold uppercase text-slate-500">${c.lojaDebito || ''}</td>
+                    <td class="px-4 py-3 text-xs font-bold text-emerald-600">R$ ${Number(c.valor || 0).toFixed(2).replace('.',',')}</td>
+                    <td class="px-4 py-3 text-xs text-center">
+                        <div class="flex flex-col items-center gap-1">
+                            <span class="text-amber-600 font-bold">${diasVenc} dia(s) restante(s)</span>
+                            ${temFoto ? '<span class="text-emerald-600 font-bold text-[10px]"><i class="fa-solid fa-image"></i> Foto anexada</span>' : '<span class="text-slate-400 text-[10px]">Sem foto</span>'}
+                        </div>
+                    </td>
                 </tr>
             `;
         });
@@ -263,38 +420,72 @@ function abrirModalOCR() {
     document.getElementById('ocrForm').classList.add('hidden');
     document.getElementById('btnSalvarNota').classList.add('hidden');
     document.getElementById('fileOCR').value = "";
+
+    ocrImagemBase64 = '';
+    ocrMimeType = 'image/jpeg';
+    ocrTextoExtraido = '';
+
+    const previewContainer = document.getElementById('ocrPreviewContainer');
+    const preview = document.getElementById('ocrPreview');
+
+    if (previewContainer) previewContainer.classList.add('hidden');
+    if (preview) preview.src = '';
 }
 
 async function processarOCR(event) {
     const file = event.target.files[0];
     if(!file) return;
 
+    ocrTextoExtraido = '';
+
     document.getElementById('ocrLoader').classList.remove('hidden');
     document.getElementById('ocrForm').classList.add('hidden');
+    document.getElementById('btnSalvarNota').classList.add('hidden');
+
+    const previewContainer = document.getElementById('ocrPreviewContainer');
+    const preview = document.getElementById('ocrPreview');
+
+    if (previewContainer) previewContainer.classList.add('hidden');
+    if (preview) preview.src = '';
 
     try {
-        const res = await Tesseract.recognize(file, 'por');
-        const text = res.data.text;
+        ocrImagemBase64 = await converterFileParaBase64(file);
 
-        // Tenta extrair hora, data e valores por Regex
-        const horaMatch = text.match(/\b([0-1]?[0-9]|2[0-3]):[0-5][0-9]\b/);
-        const dataMatch = text.match(/\b\d{2}\/\d{2}\/\d{2,4}\b/);
-        const valorMatch = text.match(/(?:R\$|VALOR|TOTAL)?\s*(\d{1,3}(?:\.\d{3})*,\d{2})/i);
+        const matchMime = String(ocrImagemBase64).match(/^data:([^;]+);base64,/);
+        ocrMimeType = matchMime ? matchMime[1] : (file.type || 'image/jpeg');
 
-        document.getElementById('ocrHora').value = horaMatch ? horaMatch[0] : '';
-        document.getElementById('ocrData').value = dataMatch ? dataMatch[0] : new Date().toLocaleDateString('pt-BR');
-        document.getElementById('ocrValor').value = valorMatch ? valorMatch[1].replace('.','').replace(',','.') : '';
-        document.getElementById('ocrLoja').value = '';
+        if (preview && previewContainer) {
+            preview.src = ocrImagemBase64;
+            previewContainer.classList.remove('hidden');
+        }
 
-        atualizarCategoriaPorHorario();
+        try {
+            const res = await Tesseract.recognize(file, 'por');
+            ocrTextoExtraido = res.data.text || '';
 
+            const text = ocrTextoExtraido;
+
+            const horaMatch = text.match(/\b([0-1]?[0-9]|2[0-3]):[0-5][0-9]\b/);
+            const dataMatch = text.match(/\b\d{2}\/\d{2}\/\d{2,4}\b/);
+            const valorMatch = text.match(/(?:R\$|VALOR|TOTAL)?\s*(\d{1,3}(?:\.\d{3})*,\d{2})/i);
+
+            document.getElementById('ocrHora').value = horaMatch ? horaMatch[0] : '';
+            document.getElementById('ocrData').value = dataMatch ? dataMatch[0] : new Date().toLocaleDateString('pt-BR');
+            document.getElementById('ocrValor').value = valorMatch ? valorMatch[1].replace('.', '').replace(',', '.') : '';
+            document.getElementById('ocrLoja').value = '';
+
+            atualizarCategoriaPorHorario();
+
+            showToast('Foto lida com sucesso! Confira e ajuste os dados.', 'success');
+        } catch (erroOcr) {
+            document.getElementById('ocrData').value = new Date().toLocaleDateString('pt-BR');
+            showToast('Não foi possível ler automaticamente. Você ainda pode salvar a foto e preencher manualmente.', 'warning');
+        }
+    } catch (erroArquivo) {
+        ocrImagemBase64 = '';
+        showToast('Erro ao carregar a imagem para envio.', 'error');
+    } finally {
         document.getElementById('ocrLoader').classList.add('hidden');
-        document.getElementById('ocrForm').classList.remove('hidden');
-        document.getElementById('btnSalvarNota').classList.remove('hidden');
-        showToast('Foto lida com sucesso! Confira e ajuste os dados.', 'success');
-    } catch(e) {
-        document.getElementById('ocrLoader').classList.add('hidden');
-        showToast('Não foi possível ler os dados automaticamente. Preencha manualmente.', 'warning');
         document.getElementById('ocrForm').classList.remove('hidden');
         document.getElementById('btnSalvarNota').classList.remove('hidden');
     }
@@ -318,24 +509,52 @@ function atualizarCategoriaPorHorario() {
 }
 
 async function salvarNotaNaCarteira() {
+    const valorRaw = document.getElementById('ocrValor').value;
+    const loja = document.getElementById('ocrLoja').value.trim();
+
+    if (!ocrImagemBase64) {
+        showToast('Envie ou tire a foto do comprovante antes de guardar.', 'warning');
+        return;
+    }
+
+    if (!valorRaw || !loja) {
+        showToast('Informe o Valor e a Sigla da Loja que será debitada!', 'warning');
+        return;
+    }
+
+    const valorNumerico = parseFloat(String(valorRaw).replace(',', '.')) || 0;
+
     const data = {
         action: 'saveComprovante',
         login: userData.login,
         dataDespesa: document.getElementById('ocrData').value,
         horaDespesa: document.getElementById('ocrHora').value,
-        valor: document.getElementById('ocrValor').value,
-        lojaDebito: document.getElementById('ocrLoja').value,
+        valor: valorNumerico,
+        lojaDebito: loja,
         categoria: document.getElementById('ocrCategoria').value,
-        ocrConteudo: 'Lido via OCR'
+        ocrConteudo: String(ocrTextoExtraido || '').slice(0, 5000),
+        imagemBase64: ocrImagemBase64,
+        mimeType: ocrMimeType
     };
 
-    if(!data.valor || !data.lojaDebito) { showToast('Informe o Valor e a Sigla da Loja que será debitada!', 'warning'); return; }
-
     const r = await fetchAPI(data, 'btnSalvarNota');
-    if(r.success) {
+
+    if (r && r.success) {
         document.getElementById('modalOCR').classList.add('hidden');
-        showToast('Comprovante guardado na sua carteira!', 'success');
+
+        if (r.urlComprovante) {
+            showToast('Comprovante e imagem salvos no Google Drive!', 'success');
+        } else {
+            showToast('Comprovante salvo, mas a imagem não foi anexada ao Drive. Verifique permissões/publicação.', 'warning');
+        }
+
+        ocrImagemBase64 = '';
+        ocrMimeType = 'image/jpeg';
+        ocrTextoExtraido = '';
+
         carregarCarteiraSuporte();
+    } else {
+        showToast(r.message || 'Falha ao salvar comprovante.', 'error');
     }
 }
 
@@ -402,43 +621,90 @@ function renderItensViagem() {
     tb.innerHTML = '';
 
     const isColab = (String(viagemAtual.colaborador).toLowerCase() === String(userData.login).toLowerCase());
+    const isGestao = (userData.nivel === 'Coordenação GS' || userData.nivel === 'Gerência GS');
+    const podeVerComprovante = isGestao || isColab;
     const emEdicao = (viagemAtual.status === 'ABERTO' || viagemAtual.status === 'SOLICITAR CORRECAO');
 
     let total = 0;
 
-    if(viagemAtual.itens.length === 0) {
-        tb.innerHTML = '<tr><td colspan="6" class="p-6 text-center text-slate-400">Nenhum ticket anexado a esta viagem.</td></tr>';
+    if (viagemAtual.itens.length === 0) {
+        tb.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-400">Nenhum ticket anexado a esta viagem.</td></tr>';
         document.getElementById('detalheTotalValor').textContent = 'R$ 0,00';
         return;
     }
 
-    // ORDENAR POR DATA CRESCENTE (conforme solicitado)
-    viagemAtual.itens.sort((a,b) => {
-        const da = a.dataDespesa.split('/').reverse().join('-');
-        const db = b.dataDespesa.split('/').reverse().join('-');
-        return new Date(da) - new Date(db);
-    });
+    // ORDENAR POR DATA CRESCENTE
+    viagemAtual.itens.sort((a, b) => chaveDataOrdenacao(a.dataDespesa) - chaveDataOrdenacao(b.dataDespesa));
 
     viagemAtual.itens.forEach(item => {
-        total += Number(item.valor);
+        total += Number(item.valor || 0);
+
         let btnAcao = '';
         if (isColab && emEdicao) {
             btnAcao = `<button onclick="removerItemViagem('${item.idComprovante}')" class="text-red-500 hover:text-red-700" title="Remover ticket"><i class="fa-solid fa-trash"></i></button>`;
         }
 
+        let celulaComprovante = '<td class="px-4 py-3 text-xs text-center text-slate-300">—</td>';
+
+        if (podeVerComprovante) {
+            if (item.urlComprovante) {
+                const thumb = montarUrlThumbnailDrive(item.urlComprovante);
+                const urlHtml = escaparAtributoHtml(item.urlComprovante);
+
+                celulaComprovante = `
+                    <td class="px-4 py-3 text-xs">
+                        <div class="flex items-center gap-3">
+                            <img
+                                src="${thumb}"
+                                alt="Comprovante"
+                                loading="lazy"
+                                class="h-12 w-12 object-cover rounded border cursor-pointer bg-slate-100"
+                                data-url="${urlHtml}"
+                                onclick="abrirComprovante(this.dataset.url)"
+                                onerror="this.style.display='none'"
+                            >
+                            <div class="flex flex-col gap-1">
+                                <button
+                                    type="button"
+                                    class="text-[10px] font-bold text-blue-600 hover:text-blue-800"
+                                    data-url="${urlHtml}"
+                                    onclick="abrirComprovante(this.dataset.url)"
+                                >
+                                    <i class="fa-solid fa-eye mr-1"></i> Ver
+                                </button>
+                                <button
+                                    type="button"
+                                    class="text-[10px] font-bold text-emerald-600 hover:text-emerald-800"
+                                    data-url="${urlHtml}"
+                                    onclick="baixarComprovante(this.dataset.url)"
+                                >
+                                    <i class="fa-solid fa-download mr-1"></i> Baixar
+                                </button>
+                            </div>
+                        </div>
+                    </td>
+                `;
+            } else {
+                celulaComprovante = '<td class="px-4 py-3 text-xs text-center text-amber-600 font-bold">Sem imagem</td>';
+            }
+        }
+
         tb.innerHTML += `
             <tr class="hover:bg-slate-50 border-b">
-                <td class="px-4 py-3 text-xs">${item.dataDespesa}</td>
-                <td class="px-4 py-3 text-xs font-mono">${item.horaDespesa}</td>
-                <td class="px-4 py-3 text-xs font-bold text-slate-700">${item.categoria}</td>
-                <td class="px-4 py-3 text-xs uppercase font-bold text-slate-500">${item.lojaDebito}</td>
-                <td class="px-4 py-3 text-xs text-right font-bold text-emerald-600">R$ ${Number(item.valor).toFixed(2).replace('.',',')}</td>
+                <td class="px-4 py-3 text-xs">${formatarDataVisao(item.dataDespesa)}</td>
+                <td class="px-4 py-3 text-xs font-mono">${item.horaDespesa || ''}</td>
+                <td class="px-4 py-3 text-xs font-bold text-slate-700">${item.categoria || ''}</td>
+                <td class="px-4 py-3 text-xs uppercase font-bold text-slate-500">${item.lojaDebito || ''}</td>
+                <td class="px-4 py-3 text-xs text-right font-bold text-emerald-600">
+                    R$ ${Number(item.valor || 0).toFixed(2).replace('.', ',')}
+                </td>
+                ${celulaComprovante}
                 <td class="px-4 py-3 text-xs text-center">${btnAcao}</td>
             </tr>
         `;
     });
 
-    document.getElementById('detalheTotalValor').textContent = `R$ ${total.toFixed(2).replace('.',',')}`;
+    document.getElementById('detalheTotalValor').textContent = `R$ ${total.toFixed(2).replace('.', ',')}`;
 }
 
 async function abrirModalAnexarTickets() {
@@ -448,12 +714,13 @@ async function abrirModalAnexarTickets() {
 
     if(r && r.success && r.comprovantes.length > 0) {
         r.comprovantes.forEach(c => {
+            const temFoto = !!c.urlComprovante;
             div.innerHTML += `
                 <label class="flex items-center gap-3 p-2 bg-white rounded border cursor-pointer hover:border-blue-400">
                     <input type="checkbox" value="${c.idComprovante}" class="chk-ticket h-4 w-4 accent-blue-600">
                     <div class="text-xs">
-                        <span class="font-bold text-slate-800">${c.categoria}</span> (${c.dataDespesa} às ${c.horaDespesa})
-                        <span class="block text-[10px] text-slate-500">Debitar: <b>${c.lojaDebito}</b> | R$ ${Number(c.valor).toFixed(2)}</span>
+                        <span class="font-bold text-slate-800">${c.categoria || ''}</span> (${formatarDataVisao(c.dataDespesa)} às ${c.horaDespesa || ''})
+                        <span class="block text-[10px] text-slate-500">Debitar: <b>${c.lojaDebito || ''}</b> | R$ ${Number(c.valor || 0).toFixed(2).replace('.', ',')} ${temFoto ? '| <span class="text-emerald-600 font-bold">Foto ok</span>' : '| <span class="text-amber-600 font-bold">Sem foto</span>'}</span>
                     </div>
                 </label>
             `;
@@ -470,35 +737,91 @@ async function confirmarAnexoTickets() {
 
     if(ids.length === 0) { showToast('Selecione ao menos um ticket!', 'warning'); return; }
 
-    const r = await fetchAPI({ action: 'linkComprovantesToViagem', idViagem: viagemAtual.idViagem, comprovantesIds: ids }, 'btnConfirmarAnexos');
+    const r = await fetchAPI({
+        action: 'linkComprovantesToViagem',
+        idViagem: viagemAtual.idViagem,
+        comprovantesIds: ids,
+        login: userData.login
+    }, 'btnConfirmarAnexos');
+
     if(r.success) {
         document.getElementById('modalAnexarTickets').classList.add('hidden');
         showToast('Tickets vinculados à viagem!', 'success');
         recarregarDashboard();
+    } else {
+        showToast(r.message || 'Falha ao vincular tickets.', 'error');
     }
 }
 
 async function removerItemViagem(idComp) {
     if(!await showConfirm("Devolver este ticket para sua carteira temporária?")) return;
-    const r = await fetchAPI({ action: 'removeComprovanteFromViagem', idComprovante: idComp });
-    if(r.success) { showToast('Ticket removido.', 'info'); recarregarDashboard(); }
+
+    const r = await fetchAPI({
+        action: 'removeComprovanteFromViagem',
+        idComprovante: idComp,
+        login: userData.login
+    });
+
+    if(r.success) {
+        showToast('Ticket removido.', 'info');
+        recarregarDashboard();
+    } else {
+        showToast(r.message || 'Não foi possível remover o ticket.', 'error');
+    }
 }
 
 async function enviarDespesasViagem() {
     if(!await showConfirm("Enviar todas as despesas para a coordenação aprovar?", { type: 'info' })) return;
-    const r = await fetchAPI({ action: 'updateDespesaStatus', idViagem: viagemAtual.idViagem, status: 'PENDENTE' });
-    if(r.success) { showToast('Prestação enviada com sucesso!', 'success'); recarregarDashboard(); }
+
+    const r = await fetchAPI({
+        action: 'updateDespesaStatus',
+        idViagem: viagemAtual.idViagem,
+        status: 'PENDENTE',
+        login: userData.login,
+        nivel: userData.nivel
+    });
+
+    if(r.success) {
+        showToast('Prestação enviada com sucesso!', 'success');
+        recarregarDashboard();
+    } else {
+        showToast(r.message || 'Falha ao enviar prestação.', 'error');
+    }
 }
 
 async function alterarStatusViagem(novoStatus) {
-    const r = await fetchAPI({ action: 'updateDespesaStatus', idViagem: viagemAtual.idViagem, status: novoStatus });
-    if(r.success) { showToast(`Status alterado para ${novoStatus}!`, 'success'); recarregarDashboard(); }
+    const r = await fetchAPI({
+        action: 'updateDespesaStatus',
+        idViagem: viagemAtual.idViagem,
+        status: novoStatus,
+        login: userData.login,
+        nivel: userData.nivel
+    });
+
+    if(r.success) {
+        showToast(`Status alterado para ${novoStatus}!`, 'success');
+        recarregarDashboard();
+    } else {
+        showToast(r.message || 'Falha ao alterar status.', 'error');
+    }
 }
 
 async function excluirViagem() {
     if(!await showConfirm("Excluir esta viagem permanentemente?", { type: 'danger' })) return;
-    const r = await fetchAPI({ action: 'deleteDespesaViagem', idViagem: viagemAtual.idViagem });
-    if(r.success) { showToast('Viagem excluída.', 'success'); recarregarDashboard(); }
+
+    const r = await fetchAPI({
+        action: 'deleteDespesaViagem',
+        idViagem: viagemAtual.idViagem,
+        login: userData.login,
+        nivel: userData.nivel
+    });
+
+    if(r.success) {
+        showToast('Viagem excluída.', 'success');
+        recarregarDashboard();
+    } else {
+        showToast(r.message || 'Falha ao excluir viagem.', 'error');
+    }
 }
 
 function voltarDashboard() { recarregarDashboard(); }
@@ -529,5 +852,7 @@ async function confirmarRedefinirSenha() {
     if(r.success) {
         showToast('Senha redefinida com sucesso!', 'success');
         document.getElementById('modalRecuperar').classList.add('hidden');
+    } else {
+        showToast(r.message || 'Falha ao redefinir senha.', 'error');
     }
 }
