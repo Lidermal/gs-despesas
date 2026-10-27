@@ -81,24 +81,24 @@ function extrairHoraDoTexto(texto) {
 // ==================== OCR: VALOR PAGO (robusto p/ picote de máquina e recibo) ====================
 
 // Monta número a partir de parte inteira (com possíveis pontos de milhar) e centavos
-function _montarNumeroMoeda(intPart, decPart) {
+function _montarMoeda(intPart, decPart) {
     intPart = String(intPart).replace(/\./g, '').replace(/^0+(?=\d)/, '');
     if (intPart === '') intPart = '0';
     if (!/^\d+$/.test(intPart)) return null;
     decPart = (String(decPart) + '00').slice(0, 2);
     if (!/^\d{2}$/.test(decPart)) return null;
     const num = parseFloat(intPart + '.' + decPart);
-    if (!isFinite(num)) return null;
-    return num;
+    return isFinite(num) ? num : null;
 }
 
-// Converte um bloco numérico em valor monetário SÓ se for claramente moeda.
-// Regras anti-CNPJ/anti-autorização:
+// Converte bloco numérico em valor monetário SÓ se for claramente moeda.
+// temReal = existe um "R$ / RS / $" imediatamente antes do bloco (sem outro dígito no meio).
+// Regras anti-CNPJ/anti-NSU/anti-autorização:
 //  - com vírgula: decimal = vírgula (45,90 / 1.234,56) -> ok
-//  - sem vírgula e 0 pontos: inteiro sem centavos -> NÃO é moeda
-//  - sem vírgula e 2+ pontos: 12.345.678 (CNPJ/milhar sem centavos) -> descarta
-//  - sem vírgula e 1 ponto: só aceita se 2 dígitos depois (45.90 decimal ponto); 3 dígitos (1.234) descarta
-function normalizarValorMoeda(bloco) {
+//  - sem vírgula e 0 pontos: inteiro sem centavos -> só aceita se temReal (R$ 50 -> 50,00)
+//  - sem vírgula e 2+ pontos: 12.345.678 (CNPJ/milhar sem centavos) -> descarta sempre
+//  - sem vírgula e 1 ponto: 2 dígitos depois = decimal (45.90); 3 dígitos = milhar só se temReal (R$ 1.234); 1 dígito só se temReal
+function normalizarValorMoeda(bloco, temReal) {
     let s = String(bloco || '').replace(/\s+/g, '');
     if (!/^\d[\d.,]*$/.test(s)) return null;
 
@@ -113,15 +113,22 @@ function normalizarValorMoeda(bloco) {
         const intPart = s.slice(0, lastComma);
         const decPart = s.slice(lastComma + 1);
         if (!/^\d{1,2}$/.test(decPart)) return null;
-        return _montarNumeroMoeda(intPart, decPart);
+        return _montarMoeda(intPart, decPart);
     }
 
-    if (dotCount === 0) return null;
+    if (dotCount === 0) {
+        return temReal ? _montarMoeda(s, '00') : null;
+    }
+
     if (dotCount >= 2) return null;
 
     const after = s.slice(lastDot + 1);
     const before = s.slice(0, lastDot);
-    if (/^\d{2}$/.test(after)) return _montarNumeroMoeda(before, after);
+    if (/^\d{2}$/.test(after)) return _montarMoeda(before, after);
+    if (temReal) {
+        if (/^\d{1}$/.test(after)) return _montarMoeda(before, after);
+        if (/^\d{3}$/.test(after)) return _montarMoeda(s.replace(/\./g, ''), '00');
+    }
     return null;
 }
 
@@ -129,34 +136,39 @@ function extrairValorDoTexto(texto) {
     const t = String(texto || '');
     const candidatos = []; // { num, score }
 
-    function addCandidato(num, scoreBase, temReal) {
+    function add(num, base, temRealBonus) {
         if (num === null || num === undefined) return;
         if (!(num >= 0.01 && num <= 1000000)) return; // sanidade de magnitude
-        candidatos.push({ num: num, score: scoreBase + (temReal ? 50 : 0) });
+        candidatos.push({ num: num, score: base + (temRealBonus ? 50 : 0) });
     }
 
     // A partir de uma posição, acha o PRIMEIRO número que seja moeda válida na janela,
-    // pulando palavras intermediárias (ex.: "DA COMPRA:", "EM 28/10") e detecta R$ antes dele.
+    // pulando palavras intermediárias (ex.: "12X DE", "VISA ****") e detecta R$ antes dele.
     function capturarApos(inicio) {
-        const janela = t.slice(inicio, inicio + 60);
+        const janela = t.slice(inicio, inicio + 80);
         const reNum = /\d[\d.,]*\d|\d/g;
         let m;
         while ((m = reNum.exec(janela)) !== null) {
-            const num = normalizarValorMoeda(m[0]);
-            if (num === null) continue;
             const antes = janela.slice(0, m.index);
             const temReal = /(R\$|RS|\$)\s*[^0-9]*$/i.test(antes);
+            const num = normalizarValorMoeda(m[0], temReal);
+            if (num === null) continue;
             return { num: num, temReal: temReal };
         }
         return null;
     }
 
-    // Rótulos de peso ALTO (indicam o valor total/pago)
+    // Rótulos de peso ALTO (indicam o valor total/pago da transação)
     const rotulosFortes = [
-        /\bVALOR\s+(?:PAGO|A\s+PAGAR|TOTAL|DA\s+(?:TRANSA[ÇC][ÃA]O|OPERACAO))/gi,
+        /\bCR[EÉ]DITO\s+[ÀA]\s+VISTA\b/gi,
+        /\bD[EÉ]BITO\s+[ÀA]\s+VISTA\b/gi,
+        /\bPAGAMENTO\s+[ÀA]\s+VISTA\b/gi,
+        /\b[ÀA]\s+VISTA\b/gi,
+        /\bCR[EÉ]DITO\s+PARCELADO\b/gi,
+        /\bVALOR\s+(?:PAGO|A\s+PAGAR|TOTAL|DA\s+(?:COMPRA|TRANSA[ÇC][ÃA]O|OPERACAO))\b/gi,
         /\bTOTAL\b(?:\s+(?:DA\s+)?(?:COMPRA|TRANSA[ÇC][ÃA]O|A\s+PAGAR|PAGO))?/gi,
         /\bTOTAIS\b/gi,
-        /\bVL\s*\.?\s*TOT\b/gi,
+        /\bV[RRL]\s*\.?\s*TOT\b/gi,
         /\bTOMBAMENTO\b/gi
     ];
 
@@ -164,14 +176,16 @@ function extrairValorDoTexto(texto) {
     const rotulosFracos = [
         /\bVALOR\b/gi,
         /\bPAGO\b/gi,
-        /\bSUBTOTAL\b/gi
+        /\bSUBTOTAL\b/gi,
+        /\bCR[EÉ]DITO\b/gi,
+        /\bD[EÉ]BITO\b/gi
     ];
 
     for (const re of rotulosFortes) {
         let m; re.lastIndex = 0;
         while ((m = re.exec(t)) !== null) {
             const cap = capturarApos(m.index + m[0].length);
-            if (cap) addCandidato(cap.num, 100, cap.temReal);
+            if (cap) add(cap.num, 100, cap.temReal);
         }
     }
 
@@ -179,27 +193,27 @@ function extrairValorDoTexto(texto) {
         let m; re.lastIndex = 0;
         while ((m = re.exec(t)) !== null) {
             const cap = capturarApos(m.index + m[0].length);
-            if (cap) addCandidato(cap.num, 30, cap.temReal);
+            if (cap) add(cap.num, 30, cap.temReal);
         }
     }
 
-    // Qualquer "R$ 45,90" isolado (peso baixo, mas com bônus de R$)
+    // Qualquer "R$ 45,90" / "R$ 50" isolado (peso médio-baixo, mas vence número solto)
     const reReal = /(R\$|RS|\$)\s*(\d[\d.,]*\d|\d)/gi;
     let mr;
     while ((mr = reReal.exec(t)) !== null) {
-        addCandidato(normalizarValorMoeda(mr[2]), 10, true);
+        add(normalizarValorMoeda(mr[2], true), 60, false);
     }
 
     // Fallback: número em formato BR puro com centavos, mesmo sem rótulo/R$
     const reBR = /\b\d{1,3}(?:\.\d{3})*,\d{2}\b/g;
     let mb;
     while ((mb = reBR.exec(t)) !== null) {
-        addCandidato(normalizarValorMoeda(mb[0]), 5, false);
+        add(normalizarValorMoeda(mb[0], false), 5, false);
     }
 
     if (candidatos.length === 0) return '';
 
-    // Maior score vence; empate -> maior valor (pega o TOTAL, não subtotal/troco)
+    // Maior score vence; empate -> maior valor (pega o TOTAL, não subtotal/parcela/troco)
     candidatos.sort((a, b) => (b.score - a.score) || (b.num - a.num));
     return candidatos[0].num.toFixed(2);
 }
