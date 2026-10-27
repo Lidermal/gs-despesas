@@ -49,12 +49,8 @@ function chaveDataOrdenacao(valor) {
 // ==================== OCR: DATA / HORA ====================
 
 function extrairDataDoTexto(texto) {
-    // Substitui possíveis erros de OCR e padroniza espaços
     let t = String(texto || '').replace(/\s+/g, ' ');
     
-    // Expressão regular super tolerante a erros do OCR (ignora \b).
-    // Procura: (01 a 31) separador (01 a 12) separador (2000 a 2099 ou 00 a 99)
-    // Separadores aceitos: / - . , espaço | \ l 1 I
     const re = /(?:^|[^\d])(0[1-9]|[12]\d|3[01])[\/\-\.\,\s\|l1I\\]{1,3}(0[1-9]|1[012])[\/\-\.\,\s\|l1I\\]{1,3}(20\d{2}|\d{2})(?=[^\d]|$)/g;
     
     let m;
@@ -64,13 +60,11 @@ function extrairDataDoTexto(texto) {
         let y = parseInt(m[3], 10);
         if (m[3].length === 2) y = 2000 + y;
         
-        // Validação extra de sanidade da data
         if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12 && y >= 2000 && y <= 2100) {
-            return `${pad2(d)}/${pad2(mo)}/${y}`; // Retorna a primeira encontrada válida
+            return `${pad2(d)}/${pad2(mo)}/${y}`;
         }
     }
     
-    // Fallback ISO (AAAA-MM-DD) tolerante
     const reIso = /(?:^|[^\d])(20\d{2})[\-\.\/](0[1-9]|1[012])[\-\.\/](0[1-9]|[12]\d|3[01])(?=[^\d]|$)/g;
     if ((m = reIso.exec(t)) !== null) {
         const y = +m[1], mo = +m[2], d = +m[3];
@@ -81,7 +75,6 @@ function extrairDataDoTexto(texto) {
 
 function extrairHoraDoTexto(texto) {
     let t = String(texto || '').replace(/\s+/g, ' ');
-    // Procura formatos de hora aceitando espaços ou sujeiras no meio do separador
     const re = /(?:^|[^\d])([01]?\d|2[0-3])\s*[:;hH\.\-]\s*([0-5]\d)(?=[^\d]|$)/g;
     let m;
     while ((m = re.exec(t)) !== null) {
@@ -90,19 +83,16 @@ function extrairHoraDoTexto(texto) {
     return '';
 }
 
-// ==================== OCR: VALOR ====================
+// ==================== OCR: VALOR (MELHORADO) ====================
 
 function extrairValorDoTexto(texto) {
     let t = String(texto || '').toUpperCase().replace(/\n/g, ' ');
     
-    // 1. Limpeza pesada p/ corrigir erros comuns de OCR em dinheiro
-    // Corrige espaços antes e depois da vírgula (Ex: "15 , 50" -> "15,50")
+    // Correções de OCR comuns
     t = t.replace(/(\d+)\s*[.,]\s*(\d{2})(?=[^\d]|$)/g, '$1,$2');
-    
-    // Corrige confusão de OCR de O (letra) por 0 (número) nos centavos
     t = t.replace(/(\d[,.])O(\d)/g, '$10$2').replace(/(\d[,.])\dO/g, '$1$20').replace(/(\d[,.])OO/g, '$100');
 
-    // 2. Extrai TUDO que pareça dinheiro (qualquer número com exatas 2 casas decimais)
+    // Extrai todos os valores monetários possíveis
     const regexMoeda = /(?:R\$\s*|RS\s*|\$\s*|VALOR\s*|TOTAL\s*)?(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})(?=[^\d]|$)/g;
     let m;
     let valores = [];
@@ -116,43 +106,49 @@ function extrairValorDoTexto(texto) {
             const decPart = clean.substring(lastSeparator + 1);
             const num = parseFloat((intPart || '0') + '.' + decPart);
             
-            // Filtro de sanidade (evita pegar números aleatórios gigantes ou zero)
             if (num > 0.01 && num < 50000) {
-                valores.push({ original: m[0], num: num, index: m.index });
+                valores.push({ 
+                    original: m[0], 
+                    num: num, 
+                    index: m.index,
+                    temReal: m[0].includes('R$') || m[0].includes('RS') || m[0].includes('$'),
+                    temTotal: m[0].includes('TOTAL')
+                });
             }
         }
     }
 
     if (valores.length === 0) return '';
 
+    // Palavras-chave com pesos
+    const palavrasChave = [
+        { regex: /TOTAL\s*DA\s*COMPRA/g, peso: 150 },
+        { regex: /VALOR\s*PAGO/g, peso: 140 },
+        { regex: /TOTAL\s*A\s*PAGAR/g, peso: 140 },
+        { regex: /TOTAL\s*:/g, peso: 130 },
+        { regex: /PAGO\s*:/g, peso: 120 },
+        { regex: /TOMBAMENTO/g, peso: 110 },
+        { regex: /VALOR\s*:/g, peso: 100 },
+        { regex: /CART[AÃ]O/g, peso: 90 },
+        { regex: /PIX/g, peso: 90 },
+        { regex: /D[EÉ]BITO/g, peso: 80 },
+        { regex: /CR[EÉ]DITO/g, peso: 80 },
+        { regex: /TOTAL/g, peso: 70 },
+        { regex: /VALOR/g, peso: 60 }
+    ];
+
     let bestNum = 0;
     let maxScore = -1;
 
-    // Palavras que indicam o valor correto de pagamento
-    const palavrasChave = [
-        { regex: /TOTAL/g, peso: 100 },
-        { regex: /VALOR\s+PAGO/g, peso: 100 },
-        { regex: /PAGO/g, peso: 90 },
-        { regex: /TOMBAMENTO/g, peso: 80 },
-        { regex: /VALOR/g, peso: 70 },
-        { regex: /CART[AÃ]O/g, peso: 70 },
-        { regex: /PIX/g, peso: 70 },
-        { regex: /D[EÉ]BITO/g, peso: 70 },
-        { regex: /CR[EÉ]DITO/g, peso: 70 },
-        { regex: /DINHEIRO/g, peso: 60 }
-    ];
-
-    // 3. Avalia qual é o melhor valor encontrado na nota
     valores.forEach(v => {
         let score = 0;
 
-        // Bônus se o valor estava colado com sinal de Real ou palavras fortes
-        if (v.original.includes('R$') || v.original.includes('RS') || v.original.includes('$') || v.original.includes('TOTAL')) {
-            score += 50;
-        }
+        // Bônus por ter R$ ou TOTAL no próprio valor
+        if (v.temReal) score += 40;
+        if (v.temTotal) score += 30;
 
-        // Analisa a vizinhança (60 caracteres ANTES do valor)
-        const inicio = Math.max(0, v.index - 60);
+        // Analisa a vizinhança (80 caracteres ANTES do valor)
+        const inicio = Math.max(0, v.index - 80);
         const janela = t.substring(inicio, v.index);
         
         palavrasChave.forEach(pc => {
@@ -162,9 +158,8 @@ function extrairValorDoTexto(texto) {
             }
         });
 
-        // Desempate natural: em notas fiscais, o maior valor formatado costuma ser o Total.
-        // Adicionamos uma fração do valor ao score para favorecer valores maiores se não houver palavras chave
-        score += (v.num / 10000); 
+        // Bônus para valores maiores (geralmente o total é o maior)
+        score += (v.num / 1000);
 
         if (score > maxScore) {
             maxScore = score;
@@ -265,7 +260,6 @@ window.onload = () => {
     }
 };
 
-// LOGOUT: não exibe alerta
 function logout() {
     localStorage.removeItem('usuarioDespesasAtivo');
     localStorage.removeItem('loginDespesasTimestamp');
@@ -279,7 +273,7 @@ function logout() {
     document.getElementById('authView').classList.remove('hidden');
 }
 
-// ==================== TOAST (ALERTA BONITO) ====================
+// ==================== TOAST ====================
 function showToast(message, type = 'info', title = null, duration = 4000) {
     const container = document.getElementById('toastContainer');
     if (!container) return;
@@ -341,7 +335,7 @@ async function fetchAPI(data, btnId = null, textId = null, originalText = null) 
     }
 }
 
-// ==================== CONTROLE DE AUTH ====================
+// ==================== AUTH ====================
 function toggleAuthView(v) {
     if (v === 'register') { document.getElementById('loginSection').classList.add('hidden'); document.getElementById('registerSection').classList.remove('hidden'); }
     else { document.getElementById('registerSection').classList.add('hidden'); document.getElementById('loginSection').classList.remove('hidden'); }
@@ -368,7 +362,7 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
     else showToast(r.message, 'error');
 });
 
-// ==================== CARREGAMENTO DO PAINEL ====================
+// ==================== PAINEL ====================
 function iniciarSistema() {
     document.getElementById('authView').classList.add('hidden');
     document.getElementById('globalHeader').classList.remove('hidden');
@@ -409,7 +403,6 @@ async function recarregarDashboard() {
     }
 }
 
-// ==== Filtro de Lojas (Siglas) ====
 function renderFiltrosSiglas() {
     const div = document.getElementById('filtroSiglasLojas');
     div.innerHTML = '';
@@ -470,7 +463,7 @@ function renderViagensGrid() {
     });
 }
 
-// ==================== FLUXO DA COORDENAÇÃO ====================
+// ==================== COORDENAÇÃO ====================
 async function carregarUsuariosParaSelect() {
     const r = await fetchAPI({ action: 'getUsers' });
     if (r.success) {
@@ -507,7 +500,7 @@ async function confirmarCriarViagem() {
     }
 }
 
-// ==================== FLUXO DO SUPORTE (CARTEIRA E OCR) ====================
+// ==================== SUPORTE - CARTEIRA ====================
 async function carregarCarteiraSuporte() {
     const r = await fetchAPI({ action: 'getCarteiraComprovantes', login: userData.login });
     const tb = document.getElementById('tbCarteira');
@@ -528,7 +521,7 @@ async function carregarCarteiraSuporte() {
 
             tb.innerHTML += `
                 <tr class="hover:bg-slate-50 border-b">
-                    <td class="px-4 py-3 text-xs font-mono">${formatarDataVisao(c.dataDespesa)} às ${c.horaDespesa || ''}</td>
+                    <td class="px-4 py-3 text-xs font-mono">${formatarDataVisao(c.dataDespesa)} ${c.horaDespesa ? 'às ' + c.horaDespesa : ''}</td>
                     <td class="px-4 py-3 text-xs font-bold text-slate-700">${c.categoria || ''}</td>
                     <td class="px-4 py-3 text-xs font-bold uppercase text-slate-500">${c.lojaDebito || ''}</td>
                     <td class="px-4 py-3 text-xs font-bold text-emerald-600">R$ ${Number(c.valor || 0).toFixed(2).replace('.', ',')}</td>
@@ -608,7 +601,6 @@ async function processarOCR(event) {
             document.getElementById('ocrData').value = dataDet;
             document.getElementById('ocrHora').value = horaDet;
             document.getElementById('ocrValor').value = valorDet;
-            // Loja e Categoria permanecem VAZIAS (manuais por padrão)
 
             const faltantes = [];
             if (!dataDet) faltantes.push('data');
@@ -666,8 +658,11 @@ async function salvarNotaNaCarteira() {
 
     if (r && r.success) {
         document.getElementById('modalOCR').classList.add('hidden');
-        if (r.urlComprovante) showToast('Comprovante salvo no Google Drive!', 'success');
-        else showToast('Salvo, mas sem anexo no Drive. Verifique permissões.', 'warning');
+        if (r.urlComprovante) {
+            showToast('✅ Comprovante e FOTO salvos no Google Drive! A Coordenação/Gerência poderá visualizar.', 'success');
+        } else {
+            showToast('Salvo, mas sem anexo no Drive. Verifique permissões.', 'warning');
+        }
 
         ocrImagemBase64 = '';
         ocrMimeType = 'image/jpeg';
@@ -678,7 +673,7 @@ async function salvarNotaNaCarteira() {
     }
 }
 
-// ==================== VISUALIZAÇÃO DETALHADA ====================
+// ==================== DETALHES DA VIAGEM ====================
 function abrirViagemDetalhe(id) {
     viagemAtual = viagensGlobais.find(v => v.idViagem === id);
     if (!viagemAtual) return;
@@ -744,7 +739,7 @@ function renderItensViagem() {
     let total = 0;
 
     if (viagemAtual.itens.length === 0) {
-        tb.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-400">Nenhum ticket anexado a esta viagem.</td></tr>';
+        tb.innerHTML = '<tr><td colspan="6" class="p-6 text-center text-slate-400">Nenhum ticket anexado a esta viagem.</td></tr>';
         document.getElementById('detalheTotalValor').textContent = 'R$ 0,00';
         return;
     }
@@ -781,10 +776,10 @@ function renderItensViagem() {
             }
         }
 
+        // REMOVIDA COLUNA DE HORA - APENAS DATA
         tb.innerHTML += `
             <tr class="hover:bg-slate-50 border-b">
                 <td class="px-4 py-3 text-xs">${formatarDataVisao(item.dataDespesa)}</td>
-                <td class="px-4 py-3 text-xs font-mono">${item.horaDespesa || ''}</td>
                 <td class="px-4 py-3 text-xs font-bold text-slate-700">${item.categoria || ''}</td>
                 <td class="px-4 py-3 text-xs uppercase font-bold text-slate-500">${item.lojaDebito || ''}</td>
                 <td class="px-4 py-3 text-xs text-right font-bold text-emerald-600">R$ ${Number(item.valor || 0).toFixed(2).replace('.', ',')}</td>
@@ -809,7 +804,7 @@ async function abrirModalAnexarTickets() {
                 <label class="flex items-center gap-3 p-2 bg-white rounded border cursor-pointer hover:border-blue-400">
                     <input type="checkbox" value="${c.idComprovante}" class="chk-ticket h-4 w-4 accent-blue-600">
                     <div class="text-xs">
-                        <span class="font-bold text-slate-800">${c.categoria || ''}</span> (${formatarDataVisao(c.dataDespesa)} às ${c.horaDespesa || ''})
+                        <span class="font-bold text-slate-800">${c.categoria || ''}</span> (${formatarDataVisao(c.dataDespesa)} ${c.horaDespesa ? 'às ' + c.horaDespesa : ''})
                         <span class="block text-[10px] text-slate-500">Debitar: <b>${c.lojaDebito || ''}</b> | R$ ${Number(c.valor || 0).toFixed(2).replace('.', ',')} ${temFoto ? '| <span class="text-emerald-600 font-bold">Foto ok</span>' : '| <span class="text-amber-600 font-bold">Sem foto</span>'}</span>
                     </div>
                 </label>
