@@ -48,26 +48,30 @@ function chaveDataOrdenacao(valor) {
 
 // ==================== OCR: DATA / HORA ====================
 
-// Data: DD/MM/AAAA, DD/MM/AA, DD-MM-AAAA, aceitando erros de OCR comuns (l, 1, I no lugar de /)
 function extrairDataDoTexto(texto) {
-    const t = String(texto || '').replace(/\s+/g, ' ');
-    // Regex robusta para capturar datas brasileiras com possíveis ruídos de OCR
-    const re = /\b(0[1-9]|[12][0-9]|3[01])[\/\-\.\s\,l1I](0[1-9]|1[012])[\/\-\.\s\,l1I](20\d{2}|\d{2})\b/g;
+    // Substitui possíveis erros de OCR e padroniza espaços
+    let t = String(texto || '').replace(/\s+/g, ' ');
+    
+    // Expressão regular super tolerante a erros do OCR (ignora \b).
+    // Procura: (01 a 31) separador (01 a 12) separador (2000 a 2099 ou 00 a 99)
+    // Separadores aceitos: / - . , espaço | \ l 1 I
+    const re = /(?:^|[^\d])(0[1-9]|[12]\d|3[01])[\/\-\.\,\s\|l1I\\]{1,3}(0[1-9]|1[012])[\/\-\.\,\s\|l1I\\]{1,3}(20\d{2}|\d{2})(?=[^\d]|$)/g;
+    
     let m;
-    let datas = [];
     while ((m = re.exec(t)) !== null) {
         let d = parseInt(m[1], 10);
         let mo = parseInt(m[2], 10);
         let y = parseInt(m[3], 10);
         if (m[3].length === 2) y = 2000 + y;
+        
+        // Validação extra de sanidade da data
         if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12 && y >= 2000 && y <= 2100) {
-            datas.push(`${pad2(d)}/${pad2(mo)}/${y}`);
+            return `${pad2(d)}/${pad2(mo)}/${y}`; // Retorna a primeira encontrada válida
         }
     }
-    if (datas.length > 0) return datas[0]; // Pega a primeira data válida encontrada
-
-    // Fallback ISO AAAA-MM-DD
-    const reIso = /\b(\d{4})-(\d{2})-(\d{2})\b/g;
+    
+    // Fallback ISO (AAAA-MM-DD) tolerante
+    const reIso = /(?:^|[^\d])(20\d{2})[\-\.\/](0[1-9]|1[012])[\-\.\/](0[1-9]|[12]\d|3[01])(?=[^\d]|$)/g;
     if ((m = reIso.exec(t)) !== null) {
         const y = +m[1], mo = +m[2], d = +m[3];
         if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12) return `${pad2(d)}/${pad2(mo)}/${y}`;
@@ -75,111 +79,98 @@ function extrairDataDoTexto(texto) {
     return '';
 }
 
-// Hora: HH:MM ou HHhMM. Aceita ruídos como HH;MM ou HH.MM
 function extrairHoraDoTexto(texto) {
-    const t = String(texto || '');
-    const re = /\b([01]?\d|2[0-3])[:;hH\.]([0-5]\d)\b/g;
-    let horasEncontradas = [];
+    let t = String(texto || '').replace(/\s+/g, ' ');
+    // Procura formatos de hora aceitando espaços ou sujeiras no meio do separador
+    const re = /(?:^|[^\d])([01]?\d|2[0-3])\s*[:;hH\.\-]\s*([0-5]\d)(?=[^\d]|$)/g;
     let m;
     while ((m = re.exec(t)) !== null) {
-        horasEncontradas.push(`${pad2(parseInt(m[1], 10))}:${m[2]}`);
+        return `${pad2(parseInt(m[1], 10))}:${m[2]}`;
     }
-    if (horasEncontradas.length > 0) return horasEncontradas[0];
     return '';
 }
 
-// ==================== OCR: VALOR PAGO (Melhorado p/ Cupons e Máquinas) ====================
+// ==================== OCR: VALOR ====================
 
 function extrairValorDoTexto(texto) {
-    const t = String(texto || '').toUpperCase().replace(/\n/g, ' ');
-    const candidatos = [];
+    let t = String(texto || '').toUpperCase().replace(/\n/g, ' ');
+    
+    // 1. Limpeza pesada p/ corrigir erros comuns de OCR em dinheiro
+    // Corrige espaços antes e depois da vírgula (Ex: "15 , 50" -> "15,50")
+    t = t.replace(/(\d+)\s*[.,]\s*(\d{2})(?=[^\d]|$)/g, '$1,$2');
+    
+    // Corrige confusão de OCR de O (letra) por 0 (número) nos centavos
+    t = t.replace(/(\d[,.])O(\d)/g, '$10$2').replace(/(\d[,.])\dO/g, '$1$20').replace(/(\d[,.])OO/g, '$100');
 
-    function add(num, base) {
-        if (num === null || isNaN(num) || num <= 0 || num > 50000) return;
-        candidatos.push({ num: num, score: base });
-    }
-
-    // Processa de forma robusta strings de dinheiro que podem vir com "." ou "," do OCR
-    function parseMoedaBR(str) {
-        let clean = String(str).replace(/[^\d.,]/g, '');
-        const lastComma = clean.lastIndexOf(',');
-        const lastDot = clean.lastIndexOf('.');
-        const lastSeparator = Math.max(lastComma, lastDot);
-        if (lastSeparator === -1) return parseFloat(clean);
-        const intPart = clean.substring(0, lastSeparator).replace(/[.,]/g, '');
-        const decPart = clean.substring(lastSeparator + 1);
-        return parseFloat((intPart || '0') + '.' + decPart);
-    }
-
-    // Padrão que pega valores terminados em dois dígitos decimais (ex: 1.234,56 ou 1234.56 ou 12,34)
-    const regexMoeda = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/;
-
-    // 1. Busca por valores que possuam prefixo monetário antes
-    const reMoedaBR = /(?:R\$|RS|S\$|\$)\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/g;
+    // 2. Extrai TUDO que pareça dinheiro (qualquer número com exatas 2 casas decimais)
+    const regexMoeda = /(?:R\$\s*|RS\s*|\$\s*|VALOR\s*|TOTAL\s*)?(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})(?=[^\d]|$)/g;
     let m;
-    while ((m = reMoedaBR.exec(t)) !== null) {
-        add(parseMoedaBR(m[1]), 60);
-    }
+    let valores = [];
 
-    // 2. Busca valores genéricos que estejam próximos de palavras fortes do contexto
-    const palavrasChave = [
-        { regex: /TOTAL/g, score: 100 },
-        { regex: /PAGO/g, score: 90 },
-        { regex: /VALOR/g, score: 80 },
-        { regex: /D[EÉ]BITO/g, score: 70 },
-        { regex: /CR[EÉ]DITO/g, score: 70 },
-        { regex: /PIX/g, score: 70 },
-        { regex: /DINHEIRO/g, score: 70 },
-        { regex: /CART[AÃ]O/g, score: 70 },
-        { regex: /VISA/g, score: 60 },
-        { regex: /MASTERCARD/g, score: 60 },
-        { regex: /MAESTRO/g, score: 60 },
-        { regex: /ELO/g, score: 60 },
-        { regex: /AMEX/g, score: 60 },
-        { regex: /APROVAD[OA]/g, score: 60 },
-        { regex: /TOMBAMENTO/g, score: 60 }
-    ];
-
-    palavrasChave.forEach(pc => {
-        let matchChave;
-        const re = new RegExp(pc.regex, 'gi');
-        while ((matchChave = re.exec(t)) !== null) {
-            // Olha uma janela de 60 caracteres a frente da palavra chave
-            const trecho = t.substring(matchChave.index, matchChave.index + 60);
-            const matchValor = trecho.match(regexMoeda);
-            if (matchValor) {
-                 add(parseMoedaBR(matchValor[0]), pc.score);
+    while ((m = regexMoeda.exec(t)) !== null) {
+        let stringNum = m[1];
+        let clean = stringNum.replace(/[^\d.,]/g, '');
+        const lastSeparator = Math.max(clean.lastIndexOf(','), clean.lastIndexOf('.'));
+        if (lastSeparator !== -1) {
+            const intPart = clean.substring(0, lastSeparator).replace(/[.,]/g, '');
+            const decPart = clean.substring(lastSeparator + 1);
+            const num = parseFloat((intPart || '0') + '.' + decPart);
+            
+            // Filtro de sanidade (evita pegar números aleatórios gigantes ou zero)
+            if (num > 0.01 && num < 50000) {
+                valores.push({ original: m[0], num: num, index: m.index });
             }
         }
-    });
-
-    // 3. Fallback: Qualquer número solto no formato moeda com 2 decimais
-    let reQualquerValor = new RegExp(regexMoeda, 'g');
-    while ((m = reQualquerValor.exec(t)) !== null) {
-        add(parseMoedaBR(m[0]), 10);
     }
 
-    if (candidatos.length === 0) return '';
+    if (valores.length === 0) return '';
 
-    // 4. Agrupa e consolida as pontuações do mesmo valor (Relevância)
-    const scoresPorValor = {};
-    candidatos.forEach(c => {
-        if (!scoresPorValor[c.num]) scoresPorValor[c.num] = 0;
-        scoresPorValor[c.num] += c.score;
-    });
-
-    // 5. Vence o valor com o maior score consolidado. Empate: o MAIOR valor financeiro vence.
     let bestNum = 0;
-    let bestScore = -1;
+    let maxScore = -1;
 
-    for (const numStr in scoresPorValor) {
-        const num = parseFloat(numStr);
-        const score = scoresPorValor[numStr];
-        if (score > bestScore || (score === bestScore && num > bestNum)) {
-            bestScore = score;
-            bestNum = num;
+    // Palavras que indicam o valor correto de pagamento
+    const palavrasChave = [
+        { regex: /TOTAL/g, peso: 100 },
+        { regex: /VALOR\s+PAGO/g, peso: 100 },
+        { regex: /PAGO/g, peso: 90 },
+        { regex: /TOMBAMENTO/g, peso: 80 },
+        { regex: /VALOR/g, peso: 70 },
+        { regex: /CART[AÃ]O/g, peso: 70 },
+        { regex: /PIX/g, peso: 70 },
+        { regex: /D[EÉ]BITO/g, peso: 70 },
+        { regex: /CR[EÉ]DITO/g, peso: 70 },
+        { regex: /DINHEIRO/g, peso: 60 }
+    ];
+
+    // 3. Avalia qual é o melhor valor encontrado na nota
+    valores.forEach(v => {
+        let score = 0;
+
+        // Bônus se o valor estava colado com sinal de Real ou palavras fortes
+        if (v.original.includes('R$') || v.original.includes('RS') || v.original.includes('$') || v.original.includes('TOTAL')) {
+            score += 50;
         }
-    }
+
+        // Analisa a vizinhança (60 caracteres ANTES do valor)
+        const inicio = Math.max(0, v.index - 60);
+        const janela = t.substring(inicio, v.index);
+        
+        palavrasChave.forEach(pc => {
+            pc.regex.lastIndex = 0;
+            if (pc.regex.test(janela)) {
+                score += pc.peso;
+            }
+        });
+
+        // Desempate natural: em notas fiscais, o maior valor formatado costuma ser o Total.
+        // Adicionamos uma fração do valor ao score para favorecer valores maiores se não houver palavras chave
+        score += (v.num / 10000); 
+
+        if (score > maxScore) {
+            maxScore = score;
+            bestNum = v.num;
+        }
+    });
 
     return bestNum > 0 ? bestNum.toFixed(2) : '';
 }
@@ -358,7 +349,6 @@ function toggleAuthView(v) {
 
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    // LOGIN: sem alerta no sucesso
     const r = await fetchAPI({ action: 'login', login: document.getElementById('loginUser').value.trim(), senha: document.getElementById('loginSenha').value }, 'btnLogin', 'loginText', 'Acessar Despesas <i class="fa-solid fa-arrow-right-to-bracket ml-2"></i>');
     if (r && r.success) {
         localStorage.setItem('usuarioDespesasAtivo', JSON.stringify(r.user));
@@ -615,9 +605,9 @@ async function processarOCR(event) {
             const horaDet = extrairHoraDoTexto(ocrTextoExtraido);
             const valorDet = extrairValorDoTexto(ocrTextoExtraido);
 
-            document.getElementById('ocrData').value = dataDet;     // da foto
-            document.getElementById('ocrHora').value = horaDet;      // da foto; vazio = manual
-            document.getElementById('ocrValor').value = valorDet;    // valor pago formatado como número float 'XX.XX'
+            document.getElementById('ocrData').value = dataDet;
+            document.getElementById('ocrHora').value = horaDet;
+            document.getElementById('ocrValor').value = valorDet;
             // Loja e Categoria permanecem VAZIAS (manuais por padrão)
 
             const faltantes = [];
@@ -626,16 +616,16 @@ async function processarOCR(event) {
             if (!valorDet) faltantes.push('valor pago');
 
             if (faltantes.length > 0) {
-                showToast(`Não foi possível ler: ${faltantes.join(', ')}. Preencha manualmente. (Categoria e Loja são sempre manuais.)`, 'warning');
+                showToast(`Verifique manualmente: ${faltantes.join(', ')}. (Preencha categoria e loja)`, 'warning');
             } else {
-                showToast('Data, hora e valor pago lidos da foto. Confira e preencha Categoria e Loja.', 'success');
+                showToast('Data, hora e valor lidos com sucesso. Preencha Categoria e Loja.', 'success');
             }
         } catch (erroOcr) {
-            showToast('Falha na leitura automática (OCR). Preencha os dados manualmente.', 'warning');
+            showToast('Falha na leitura (OCR). Preencha os dados manualmente.', 'warning');
         }
     } catch (erroArquivo) {
         ocrImagemBase64 = '';
-        showToast('Erro ao carregar a imagem para envio.', 'error');
+        showToast('Erro ao carregar a imagem.', 'error');
     } finally {
         document.getElementById('ocrLoader').classList.add('hidden');
         document.getElementById('ocrForm').classList.remove('hidden');
@@ -648,15 +638,15 @@ async function salvarNotaNaCarteira() {
     const loja = document.getElementById('ocrLoja').value.trim();
     const categoria = document.getElementById('ocrCategoria').value;
 
-    if (!ocrImagemBase64) { showToast('Envie ou tire a foto do comprovante antes de guardar.', 'warning'); return; }
-    if (!valorRaw) { showToast('Informe o Valor pago da despesa.', 'warning'); return; }
-    if (!loja) { showToast('Informe a Sigla da Loja que será debitada!', 'warning'); return; }
-    if (!categoria) { showToast('Selecione a Categoria da despesa.', 'warning'); return; }
+    if (!ocrImagemBase64) { showToast('Envie a foto antes de guardar.', 'warning'); return; }
+    if (!valorRaw) { showToast('Informe o Valor pago.', 'warning'); return; }
+    if (!loja) { showToast('Informe a Sigla da Loja.', 'warning'); return; }
+    if (!categoria) { showToast('Selecione a Categoria.', 'warning'); return; }
 
     let dataDespesa = document.getElementById('ocrData').value.trim();
     if (!dataDespesa) dataDespesa = new Date().toLocaleDateString('pt-BR');
 
-    const horaDespesa = document.getElementById('ocrHora').value.trim(); // pode ficar vazio (manual)
+    const horaDespesa = document.getElementById('ocrHora').value.trim();
     const valorNumerico = parseFloat(String(valorRaw).replace(',', '.')) || 0;
 
     const data = {
@@ -676,19 +666,19 @@ async function salvarNotaNaCarteira() {
 
     if (r && r.success) {
         document.getElementById('modalOCR').classList.add('hidden');
-        if (r.urlComprovante) showToast('Comprovante e imagem salvos no Google Drive!', 'success');
-        else showToast('Comprovante salvo, mas a imagem não foi anexada ao Drive. Verifique permissões/publicação.', 'warning');
+        if (r.urlComprovante) showToast('Comprovante salvo no Google Drive!', 'success');
+        else showToast('Salvo, mas sem anexo no Drive. Verifique permissões.', 'warning');
 
         ocrImagemBase64 = '';
         ocrMimeType = 'image/jpeg';
         ocrTextoExtraido = '';
         carregarCarteiraSuporte();
     } else {
-        showToast(r.message || 'Falha ao salvar comprovante.', 'error');
+        showToast(r.message || 'Falha ao salvar.', 'error');
     }
 }
 
-// ==================== VISUALIZAÇÃO DETALHADA E PRESTAÇÃO DE CONTAS ====================
+// ==================== VISUALIZAÇÃO DETALHADA ====================
 function abrirViagemDetalhe(id) {
     viagemAtual = viagensGlobais.find(v => v.idViagem === id);
     if (!viagemAtual) return;
@@ -842,7 +832,7 @@ async function confirmarAnexoTickets() {
         showToast('Tickets vinculados à viagem!', 'success');
         recarregarDashboard();
     } else {
-        showToast(r.message || 'Falha ao vincular tickets.', 'error');
+        showToast(r.message || 'Falha ao vincular.', 'error');
     }
 }
 
@@ -850,14 +840,14 @@ async function removerItemViagem(idComp) {
     if (!await showConfirm("Devolver este ticket para sua carteira temporária?")) return;
     const r = await fetchAPI({ action: 'removeComprovanteFromViagem', idComprovante: idComp, login: userData.login });
     if (r.success) { showToast('Ticket removido.', 'info'); recarregarDashboard(); }
-    else showToast(r.message || 'Não foi possível remover o ticket.', 'error');
+    else showToast(r.message || 'Falha ao remover.', 'error');
 }
 
 async function enviarDespesasViagem() {
     if (!await showConfirm("Enviar todas as despesas para a coordenação aprovar?", { type: 'info' })) return;
     const r = await fetchAPI({ action: 'updateDespesaStatus', idViagem: viagemAtual.idViagem, status: 'PENDENTE', login: userData.login, nivel: userData.nivel });
-    if (r.success) { showToast('Prestação enviada com sucesso!', 'success'); recarregarDashboard(); }
-    else showToast(r.message || 'Falha ao enviar prestação.', 'error');
+    if (r.success) { showToast('Prestação enviada!', 'success'); recarregarDashboard(); }
+    else showToast(r.message || 'Falha ao enviar.', 'error');
 }
 
 async function alterarStatusViagem(novoStatus) {
@@ -870,7 +860,7 @@ async function excluirViagem() {
     if (!await showConfirm("Excluir esta viagem permanentemente?", { type: 'danger' })) return;
     const r = await fetchAPI({ action: 'deleteDespesaViagem', idViagem: viagemAtual.idViagem, login: userData.login, nivel: userData.nivel });
     if (r.success) { showToast('Viagem excluída.', 'success'); recarregarDashboard(); }
-    else showToast(r.message || 'Falha ao excluir viagem.', 'error');
+    else showToast(r.message || 'Falha ao excluir.', 'error');
 }
 
 function voltarDashboard() { recarregarDashboard(); }
@@ -899,9 +889,9 @@ async function confirmarRedefinirSenha() {
     const nova = document.getElementById('recupNovaSenha').value;
     const r = await fetchAPI({ action: 'resetPassword', login: userRecupLogin, novaSenha: nova }, 'btnRedefinir');
     if (r.success) {
-        showToast('Senha redefinida com sucesso!', 'success');
+        showToast('Senha redefinida!', 'success');
         document.getElementById('modalRecuperar').classList.add('hidden');
     } else {
-        showToast(r.message || 'Falha ao redefinir senha.', 'error');
+        showToast(r.message || 'Falha ao redefinir.', 'error');
     }
 }
