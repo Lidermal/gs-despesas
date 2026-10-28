@@ -1,7 +1,7 @@
 const API_URL = "https://script.google.com/macros/s/AKfycbyv6rztF_a5ePHzRhzCMJDawDOHhF-le_3MgvoeMY2WUGjVRQBPmt2cSuV6Mp71MGnpUQ/exec";
 const TEMPO_SESSAO_MS = 4 * 60 * 60 * 1000;
 
-let userData = null, viagensGlobais = [], carteiraGlobais = [], viagemAtual = null, filtroLojaSelecionada = "TODAS";
+let userData = null, viagensGlobais = [], viagemAtual = null, filtroLojaSelecionada = "TODAS";
 let ocrImagemBase64 = '', ocrMimeType = 'image/jpeg', ocrTextoExtraido = '';
 let visualizadorIdAtual = null;
 const cacheImagens = {};
@@ -423,6 +423,42 @@ async function imprimirComprovante(idComp) {
   if (im.complete) setTimeout(imprimir, 150); else im.onload = () => setTimeout(imprimir, 150);
 }
 
+// ============================================================
+//  GARANTE OS CAMPOS/COLUNAS DE LOCAL (mesmo se o index.html for antigo)
+// ============================================================
+function garantirCamposLocal() {
+  const TH = 'px-4 py-3 font-bold text-slate-500 uppercase text-[10px]';
+  const LBL = 'block text-[10px] font-bold text-slate-500 mb-1';
+  const INP = 'w-full px-3 py-2 text-sm border rounded bg-slate-50';
+  // campo na tela de leitura (OCR)
+  if (!document.getElementById('ocrLocal')) {
+    const ref = document.getElementById('ocrValor'), bloco = ref && ref.closest('.grid');
+    if (bloco && bloco.parentNode) {
+      const d = document.createElement('div');
+      d.innerHTML = `<label class="${LBL}">LOCAL (CIDADE - UF) <span class="text-emerald-600">(auto)</span></label><input type="text" id="ocrLocal" placeholder="Ex: Santa Inês - MA" class="${INP}">`;
+      bloco.parentNode.insertBefore(d, bloco);
+    }
+  }
+  // campo na tela de edição
+  if (!document.getElementById('editLocal')) {
+    const ref = document.getElementById('editValor'), bloco = ref && ref.closest('.grid');
+    if (bloco && bloco.parentNode) {
+      const d = document.createElement('div');
+      d.innerHTML = `<label class="${LBL}">LOCAL (CIDADE - UF)</label><input type="text" id="editLocal" placeholder="Ex: Santa Inês - MA" class="${INP}">`;
+      bloco.parentNode.insertBefore(d, bloco);
+    }
+  }
+  // coluna "Local" no detalhe da viagem
+  const tbV = document.getElementById('tbItensViagem');
+  const tabV = tbV && tbV.closest('table');
+  const trV = tabV && tabV.querySelector('thead tr');
+  if (trV && trV.children.length === 6) {
+    const th = document.createElement('th'); th.className = TH; th.textContent = 'Local'; trV.insertBefore(th, trV.children[2]);
+    const tdTotal = tabV.querySelector('tfoot td[colspan]'); if (tdTotal) tdTotal.setAttribute('colspan', '4');
+  }
+}
+garantirCamposLocal();
+
 // ==================== SESSÃO ====================
 window.onload = () => {
   const savedUser = localStorage.getItem('usuarioDespesasAtivo');
@@ -431,7 +467,7 @@ window.onload = () => {
 };
 function logout() {
   localStorage.removeItem('usuarioDespesasAtivo'); localStorage.removeItem('loginDespesasTimestamp');
-  userData = null; viagemAtual = null; viagensGlobais = []; carteiraGlobais = [];
+  userData = null; viagemAtual = null; viagensGlobais = [];
   document.getElementById('globalHeader').classList.add('hidden'); document.getElementById('mainContent').classList.add('hidden');
   document.getElementById('viagemDetalheView').classList.add('hidden'); document.getElementById('authView').classList.remove('hidden');
 }
@@ -508,11 +544,8 @@ async function recarregarDashboard() {
   document.getElementById('dashSubtitle').textContent = isGestao ? "Acompanhe e autorize reembolsos organizados por sigla da loja." : "Receba viagens criadas pela coordenação e envie seus comprovantes.";
   const btnArea = document.getElementById('dashActionButtons'); btnArea.innerHTML = '';
   if (isGestao) {
-    document.getElementById('secaoCarteiraSuporte').classList.add('hidden');
     btnArea.innerHTML = `<button onclick="abrirModalCriarViagem()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded shadow text-sm transition"><i class="fa-solid fa-plus mr-2"></i> Criar Número da Viagem</button>`;
     carregarUsuariosParaSelect();
-  } else {
-    document.getElementById('secaoCarteiraSuporte').classList.remove('hidden'); carregarCarteiraSuporte();
   }
   const r = await fetchAPI({ action: 'getDespesasViagens', login: userData.login, nivel: userData.nivel });
   if (r && r.success) { viagensGlobais = r.viagens; renderFiltrosSiglas(); renderViagensGrid(); }
@@ -563,42 +596,15 @@ async function confirmarCriarViagem() {
   else { showToast(r.message || 'Erro ao criar.', 'error'); }
 }
 
-// ==================== CARTEIRA DO SUPORTE ====================
-async function carregarCarteiraSuporte() {
-  const r = await fetchAPI({ action: 'getCarteiraComprovantes', login: userData.login });
-  const tb = document.getElementById('tbCarteira'); tb.innerHTML = '';
-  if (r && r.success) {
-    carteiraGlobais = r.comprovantes;
-    if (r.apagadosPorValidade > 0) showToast(`${r.apagadosPorValidade} comprovante(s) expirado(s) removido(s).`, 'info');
-    if (carteiraGlobais.length === 0) { tb.innerHTML = '<tr><td colspan="7" class="p-4 text-center text-slate-400">Nenhum comprovante na carteira.</td></tr>'; return; }
-    carteiraGlobais.forEach(c => {
-      const diasVenc = 30 - Math.floor((new Date() - new Date(c.dataUpload)) / (1000 * 60 * 60 * 24));
-      const temFoto = !!c.urlComprovante;
-      const horaFormatada = formatarHoraVisao(c.horaDespesa);
-      const valorNum = Number(String(c.valor || 0).replace(',', '.')) || 0;
-      const localTxt = c.localDespesa ? escaparTextoHtml(c.localDespesa) : '<span class="text-slate-300">—</span>';
-      tb.innerHTML += `
-        <tr class="hover:bg-slate-50 border-b">
-          <td class="px-4 py-3 text-xs font-mono"><div class="flex items-center gap-3">${htmlMiniatura(c)}<span>${formatarDataVisao(c.dataDespesa)}${horaFormatada ? ' às ' + horaFormatada : ''}</span></div></td>
-          <td class="px-4 py-3 text-xs font-bold text-slate-700">${c.categoria || ''}</td>
-          <td class="px-4 py-3 text-xs font-bold text-slate-600"><i class="fa-solid fa-location-dot text-slate-400 mr-1"></i>${localTxt}</td>
-          <td class="px-4 py-3 text-xs font-bold uppercase text-slate-500">${c.lojaDebito || ''}</td>
-          <td class="px-4 py-3 text-xs font-bold text-emerald-600">R$ ${valorNum.toFixed(2).replace('.', ',')}</td>
-          <td class="px-4 py-3 text-xs text-center"><div class="flex flex-col items-center gap-1"><span class="text-amber-600 font-bold">${diasVenc} dia(s)</span>${temFoto ? '<span class="text-emerald-600 font-bold text-[10px]"><i class="fa-solid fa-image"></i> Foto ok</span>' : '<span class="text-slate-400 text-[10px]">Sem foto</span>'}</div></td>
-          <td class="px-4 py-3 text-xs text-center">
-            <div class="flex gap-2 justify-center">
-              ${temFoto ? `<button onclick="abrirVisualizador('${c.idComprovante}')" class="text-blue-600 hover:text-blue-800" title="Ver foto"><i class="fa-solid fa-eye"></i></button>` : ''}
-              <button onclick="editarComprovanteCarteira('${c.idComprovante}')" class="text-amber-600 hover:text-amber-800" title="Editar"><i class="fa-solid fa-pen"></i></button>
-              <button onclick="excluirComprovanteCarteira('${c.idComprovante}')" class="text-red-600 hover:text-red-800" title="Excluir"><i class="fa-solid fa-trash"></i></button>
-            </div>
-          </td>
-        </tr>`;
-    });
-  }
+// ==================== EDITAR / EXCLUIR DESPESA (DENTRO DA VIAGEM) ====================
+async function recarregarEReabrirViagem() {
+  const id = viagemAtual ? viagemAtual.idViagem : null;
+  await recarregarDashboard();
+  if (id) abrirViagemDetalhe(id);
 }
 
-function editarComprovanteCarteira(idComp) {
-  const item = carteiraGlobais.find(c => c.idComprovante === idComp);
+function editarComprovanteViagem(idComp) {
+  const item = (viagemAtual && viagemAtual.itens || []).find(c => c.idComprovante === idComp);
   if (!item) return;
   document.getElementById('editIdComprovante').value = idComp;
   document.getElementById('editData').value = formatarDataVisao(item.dataDespesa) || '';
@@ -636,19 +642,20 @@ async function salvarEdicaoComprovante() {
   if (novaImagem) { data.imagemBase64 = novaImagem; data.mimeType = novoMime; }
 
   const r = await fetchAPI(data, 'btnSalvarEdicao');
-  if (r && r.success) { delete cacheImagens[idComp]; document.getElementById('modalEditarComprovante').classList.add('hidden'); showToast('Comprovante atualizado!', 'success'); carregarCarteiraSuporte(); }
+  if (r && r.success) { delete cacheImagens[idComp]; document.getElementById('modalEditarComprovante').classList.add('hidden'); showToast('Despesa atualizada!', 'success'); recarregarEReabrirViagem(); }
   else { showToast(r.message || 'Erro ao atualizar.', 'error'); }
 }
 
-async function excluirComprovanteCarteira(idComp) {
-  if (!await showConfirm("Excluir este comprovante permanentemente?", { type: 'danger', icon: 'fa-trash' })) return;
+async function excluirDespesaViagem(idComp) {
+  if (!await showConfirm("Excluir esta despesa e a foto permanentemente?", { type: 'danger', icon: 'fa-trash' })) return;
   const r = await fetchAPI({ action: 'deleteComprovante', idComprovante: idComp, login: userData.login });
-  if (r && r.success) { delete cacheImagens[idComp]; showToast('Comprovante excluído.', 'success'); carregarCarteiraSuporte(); }
-  else { showToast(r.message || 'Erro ao excluir.', 'error'); }
+  if (r && r.success) { delete cacheImagens[idComp]; showToast('Despesa excluída.', 'success'); recarregarEReabrirViagem(); }
+  else { showToast((r && r.message) || 'Erro ao excluir.', 'error'); }
 }
 
 // ==================== OCR MODAL ====================
 function abrirModalOCR() {
+  if (!viagemAtual) { showToast('Abra uma viagem para enviar notas.', 'warning'); return; }
   document.getElementById('modalOCR').classList.remove('hidden'); document.getElementById('ocrForm').classList.add('hidden'); document.getElementById('btnSalvarNota').classList.add('hidden'); document.getElementById('fileOCR').value = "";
   document.getElementById('ocrData').value = ''; document.getElementById('ocrHora').value = ''; document.getElementById('ocrValor').value = ''; document.getElementById('ocrLoja').value = ''; document.getElementById('ocrCategoria').value = ''; document.getElementById('ocrLocal').value = '';
   ocrImagemBase64 = ''; ocrMimeType = 'image/jpeg'; ocrTextoExtraido = '';
@@ -700,7 +707,8 @@ async function processarOCR(event) {
   }
 }
 
-async function salvarNotaNaCarteira() {
+async function salvarNotaNaViagem() {
+  if (!viagemAtual) { showToast('Abra uma viagem para enviar a nota.', 'warning'); return; }
   const valorRaw = document.getElementById('ocrValor').value;
   const loja = document.getElementById('ocrLoja').value.trim();
   const categoria = document.getElementById('ocrCategoria').value;
@@ -712,15 +720,36 @@ async function salvarNotaNaCarteira() {
   let dataDespesa = document.getElementById('ocrData').value.trim();
   if (!dataDespesa) dataDespesa = new Date().toLocaleDateString('pt-BR');
 
-  const data = { action: 'saveComprovante', login: userData.login, dataDespesa, horaDespesa: document.getElementById('ocrHora').value.trim(), valor: parseFloat(String(valorRaw).replace(',', '.')), lojaDebito: loja, categoria, localDespesa: document.getElementById('ocrLocal').value.trim(), ocrConteudo: String(ocrTextoExtraido || '').slice(0, 5000), imagemBase64: ocrImagemBase64, mimeType: ocrMimeType };
+  const idViagem = viagemAtual.idViagem;
+  const data = { action: 'saveComprovante', login: userData.login, idViagem, dataDespesa, horaDespesa: document.getElementById('ocrHora').value.trim(), valor: parseFloat(String(valorRaw).replace(',', '.')), lojaDebito: loja, categoria, localDespesa: document.getElementById('ocrLocal').value.trim(), ocrConteudo: String(ocrTextoExtraido || '').slice(0, 5000), imagemBase64: ocrImagemBase64, mimeType: ocrMimeType };
   const r = await fetchAPI(data, 'btnSalvarNota');
-  if (r && r.success) {
-    document.getElementById('modalOCR').classList.add('hidden');
-    if (r.urlComprovante) showToast('Comprovante e foto salvos no Drive!', 'success');
-    else showToast('Salvo, mas a foto não foi para o Drive. Verifique as permissões do Apps Script.', 'warning');
-    ocrImagemBase64 = ''; ocrMimeType = 'image/jpeg'; ocrTextoExtraido = '';
-    carregarCarteiraSuporte();
-  } else { showToast(r.message || 'Falha ao salvar.', 'error'); }
+  if (!(r && r.success)) { showToast((r && r.message) || 'Falha ao salvar.', 'error'); return; }
+
+  // garante o vínculo com a viagem (caso o servidor ainda não vincule sozinho)
+  const vinculou = await vincularNotaNaViagem(idViagem, r);
+  document.getElementById('modalOCR').classList.add('hidden');
+  if (!vinculou) showToast('Nota salva, mas não consegui vinculá-la à viagem. Verifique o Apps Script.', 'warning');
+  else if (r.urlComprovante) showToast('Despesa e foto salvas na viagem!', 'success');
+  else showToast('Despesa salva, mas a foto não foi para o Drive. Verifique as permissões do Apps Script.', 'warning');
+  ocrImagemBase64 = ''; ocrMimeType = 'image/jpeg'; ocrTextoExtraido = '';
+  recarregarEReabrirViagem();
+}
+
+// Vincula o comprovante recém-criado à viagem. Usa o id devolvido pelo servidor;
+// se não vier, procura o comprovante mais recente ainda sem viagem.
+async function vincularNotaNaViagem(idViagem, respostaSalvar) {
+  if (respostaSalvar && (respostaSalvar.vinculado === true || respostaSalvar.idViagem === idViagem)) return true;
+  let idComp = respostaSalvar && (respostaSalvar.idComprovante || respostaSalvar.id);
+  if (!idComp) {
+    const lista = await fetchAPI({ action: 'getCarteiraComprovantes', login: userData.login });
+    if (lista && lista.success && lista.comprovantes && lista.comprovantes.length) {
+      const ord = lista.comprovantes.slice().sort((a, b) => new Date(b.dataUpload) - new Date(a.dataUpload));
+      idComp = ord[0].idComprovante;
+    }
+  }
+  if (!idComp) return false;
+  const v = await fetchAPI({ action: 'linkComprovantesToViagem', idViagem, comprovantesIds: [idComp], login: userData.login });
+  return !!(v && v.success);
 }
 
 // ==================== DETALHES DA VIAGEM ====================
@@ -745,7 +774,7 @@ function renderAcoesViagem() {
   let direita = '';
 
   if (isColab && (viagemAtual.status === 'ABERTO' || viagemAtual.status === 'SOLICITAR CORRECAO')) {
-    area.innerHTML += `<button onclick="abrirModalAnexarTickets()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-paperclip mr-2"></i> Inserir Tickets</button>`;
+    area.innerHTML += `<button onclick="abrirModalOCR()" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-camera mr-2"></i> Tirar Foto / Enviar Nota</button>`;
     if (viagemAtual.itens.length > 0) direita += `<button onclick="enviarDespesasViagem()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-paper-plane mr-2"></i> Enviar Despesas</button>`;
   }
   if (isGestao) {
@@ -773,13 +802,13 @@ function renderItensViagem() {
   const podeVerComprovante = isGestao || isColab;
   const emEdicao = (viagemAtual.status === 'ABERTO' || viagemAtual.status === 'SOLICITAR CORRECAO');
   let total = 0;
-  if (viagemAtual.itens.length === 0) { tb.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-400">Nenhum ticket anexado.</td></tr>'; document.getElementById('detalheTotalValor').textContent = 'R$ 0,00'; return; }
+  if (viagemAtual.itens.length === 0) { tb.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-400">Nenhuma despesa lançada. Use “Tirar Foto / Enviar Nota”.</td></tr>'; document.getElementById('detalheTotalValor').textContent = 'R$ 0,00'; return; }
   viagemAtual.itens.sort((a, b) => chaveDataOrdenacao(a.dataDespesa) - chaveDataOrdenacao(b.dataDespesa));
   viagemAtual.itens.forEach(item => {
     const valorNum = Number(String(item.valor || 0).replace(',', '.')) || 0;
     total += valorNum;
     let btnAcao = '';
-    if (isColab && emEdicao) btnAcao = `<button onclick="removerItemViagem('${item.idComprovante}')" class="text-red-500 hover:text-red-700" title="Remover"><i class="fa-solid fa-trash"></i></button>`;
+    if (isColab && emEdicao) btnAcao = `<div class="flex gap-3 justify-center"><button onclick="editarComprovanteViagem('${item.idComprovante}')" class="text-amber-600 hover:text-amber-800" title="Editar"><i class="fa-solid fa-pen"></i></button><button onclick="excluirDespesaViagem('${item.idComprovante}')" class="text-red-500 hover:text-red-700" title="Excluir"><i class="fa-solid fa-trash"></i></button></div>`;
     let celulaComprovante = '<td class="px-4 py-3 text-xs text-center text-slate-300">—</td>';
     if (podeVerComprovante) {
       if (item.urlComprovante) {
@@ -906,33 +935,6 @@ tfoot td{background:#ecfdf5;font-weight:bold;font-size:13px;color:#047857}
   showToast('Relatório pronto! Na janela de impressão escolha "Salvar como PDF".', 'info');
 }
 
-async function abrirModalAnexarTickets() {
-  const r = await fetchAPI({ action: 'getCarteiraComprovantes', login: userData.login });
-  const div = document.getElementById('listaTicketsDisponiveis'); div.innerHTML = '';
-  if (r && r.success && r.comprovantes.length > 0) {
-    r.comprovantes.forEach(c => {
-      const temFoto = !!c.urlComprovante;
-      const valorNum = Number(String(c.valor || 0).replace(',', '.')) || 0;
-      div.innerHTML += `<label class="flex items-center gap-3 p-2 bg-white rounded border cursor-pointer hover:border-blue-400"><input type="checkbox" value="${c.idComprovante}" class="chk-ticket h-4 w-4 accent-blue-600"><div class="text-xs"><span class="font-bold text-slate-800">${c.categoria || ''}</span> (${formatarDataVisao(c.dataDespesa)})${c.localDespesa ? ' - ' + escaparTextoHtml(c.localDespesa) : ''}<span class="block text-[10px] text-slate-500">Debitar: <b>${c.lojaDebito || ''}</b> | R$ ${valorNum.toFixed(2).replace('.', ',')} ${temFoto ? '| <span class="text-emerald-600 font-bold">Foto ok</span>' : '| <span class="text-amber-600 font-bold">Sem foto</span>'}</span></div></label>`;
-    });
-    document.getElementById('modalAnexarTickets').classList.remove('hidden');
-  } else { showToast('Carteira vazia.', 'info'); }
-}
-
-async function confirmarAnexoTickets() {
-  const checks = document.querySelectorAll('.chk-ticket:checked');
-  const ids = Array.from(checks).map(c => c.value);
-  if (ids.length === 0) { showToast('Selecione ao menos um.', 'warning'); return; }
-  const r = await fetchAPI({ action: 'linkComprovantesToViagem', idViagem: viagemAtual.idViagem, comprovantesIds: ids, login: userData.login }, 'btnConfirmarAnexos');
-  if (r.success) { document.getElementById('modalAnexarTickets').classList.add('hidden'); showToast('Tickets vinculados!', 'success'); recarregarDashboard(); }
-  else { showToast(r.message || 'Erro.', 'error'); }
-}
-
-async function removerItemViagem(idComp) {
-  if (!await showConfirm("Devolver este ticket para a carteira?")) return;
-  const r = await fetchAPI({ action: 'removeComprovanteFromViagem', idComprovante: idComp, login: userData.login });
-  if (r.success) { showToast('Ticket removido.', 'info'); recarregarDashboard(); } else { showToast(r.message || 'Erro.', 'error'); }
-}
 
 async function enviarDespesasViagem() {
   if (!await showConfirm("Enviar despesas para aprovação?", { type: 'info' })) return;
