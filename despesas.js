@@ -221,6 +221,108 @@ function extrairValorDoTexto(texto) {
 }
 
 // ============================================================
+//  OCR: LOCAL (CIDADE - UF)  ex.: "Santa Inês - MA"
+// ============================================================
+const UFS_BR = 'AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO';
+const ESTADOS_UF = {
+  'ACRE': 'AC', 'ALAGOAS': 'AL', 'AMAPA': 'AP', 'AMAZONAS': 'AM', 'BAHIA': 'BA', 'CEARA': 'CE', 'DISTRITO FEDERAL': 'DF',
+  'ESPIRITO SANTO': 'ES', 'GOIAS': 'GO', 'MARANHAO': 'MA', 'MATO GROSSO': 'MT', 'MATO GROSSO DO SUL': 'MS', 'MINAS GERAIS': 'MG',
+  'PARA': 'PA', 'PARAIBA': 'PB', 'PARANA': 'PR', 'PERNAMBUCO': 'PE', 'PIAUI': 'PI', 'RIO DE JANEIRO': 'RJ', 'RIO GRANDE DO NORTE': 'RN',
+  'RIO GRANDE DO SUL': 'RS', 'RONDONIA': 'RO', 'RORAIMA': 'RR', 'SANTA CATARINA': 'SC', 'SAO PAULO': 'SP', 'SERGIPE': 'SE', 'TOCANTINS': 'TO'
+};
+// palavras que indicam que o trecho NÃO é nome de cidade
+const PALAVRAS_NAO_CIDADE = new Set(['RUA', 'AV', 'AVENIDA', 'ROD', 'RODOVIA', 'LOJA', 'CNPJ', 'CPF', 'TOTAL', 'VALOR', 'CUPOM', 'FISCAL', 'NOTA', 'DATA', 'HORA', 'CARTAO', 'CREDITO', 'DEBITO', 'PIX', 'ITEM', 'QTD', 'TROCO', 'ENDERECO', 'END', 'BAIRRO', 'CEP', 'IE', 'IM', 'TEL', 'FONE', 'LTDA', 'EIRELI', 'ME', 'SA', 'CAIXA', 'OPERADOR', 'CODIGO', 'COD', 'NSU', 'AUT', 'AGENCIA', 'CONTA', 'VENDA', 'ESTADO', 'UF', 'CIDADE', 'MUNICIPIO', 'MUN', 'CID', 'PRACA', 'TRAVESSA', 'ALAMEDA', 'QUADRA', 'LOTE', 'SALA', 'CENTRO', 'BR', 'KM', 'NUMERO', 'NRO', 'SN', 'S/N', 'COMPROVANTE', 'VIA', 'CLIENTE', 'ESTABELECIMENTO', 'TERMINAL', 'DOC', 'MERCHANT']);
+
+function semAcentos_(s) { return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
+
+function tituloCidade_(s) {
+  const pequenas = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
+  return String(s).toLowerCase().split(/\s+/).filter(Boolean).map((p, i) => (i > 0 && pequenas.has(p)) ? p : p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+}
+
+// Limpa o trecho que veio antes da UF, ficando só com o nome provável da cidade
+function limparNomeCidade_(bruto) {
+  let s = String(bruto || '');
+  s = s.split(/[\d,;:|]/).pop();                       // pega o que vem depois do último número/vírgula/dois-pontos
+  s = s.replace(/[^A-ZÀ-Ü' ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  let palavras = s.split(' ').filter(Boolean);
+  // remove palavras de endereço/rótulo do começo
+  while (palavras.length && (PALAVRAS_NAO_CIDADE.has(semAcentos_(palavras[0])) || palavras[0].length < 2)) palavras.shift();
+  if (palavras.length > 4) palavras = palavras.slice(-4);
+  // se ainda sobrou palavra proibida no meio, descarta
+  if (palavras.some(p => PALAVRAS_NAO_CIDADE.has(semAcentos_(p)) && !['SANTA', 'SANTO'].includes(p))) {
+    // mantém só o trecho depois da última palavra proibida
+    let idxUlt = -1;
+    palavras.forEach((p, i) => { if (PALAVRAS_NAO_CIDADE.has(semAcentos_(p))) idxUlt = i; });
+    palavras = palavras.slice(idxUlt + 1);
+  }
+  const nome = palavras.join(' ').trim();
+  if (nome.length < 3 || nome.length > 40) return '';
+  return nome;
+}
+
+function extrairLocalDoTexto(texto) {
+  if (!texto) return '';
+  const linhas = String(texto).toUpperCase().split(/\r?\n/).map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const candidatos = [];
+  const SEP = '[-\\u2013\\u2014\\/,]';
+  const UF = `(${UFS_BR})(?![A-Z0-9])`;
+
+  linhas.forEach((linha, idx) => {
+    let m;
+    // 1) com rótulo: "CIDADE: SANTA INES - MA" / "MUNICIPIO SANTA INES UF: MA"
+    const r1 = new RegExp(`(?:CIDADE|MUNIC[IÍ]PIO|MUN|CID)\\s*[:\\-]?\\s*([A-ZÀ-Ü][A-ZÀ-Ü' ]{2,40}?)\\s*(?:${SEP}|UF\\s*[:\\-]?|\\s)\\s*${UF}`);
+    m = r1.exec(linha);
+    if (m) { const c = limparNomeCidade_(m[1]); if (c) candidatos.push({ cidade: c, uf: m[2], score: 12, i: idx }); }
+
+    // 2) logo depois do CEP: "65300-000 SANTA INES - MA"
+    const r2 = new RegExp(`\\d{5}\\s?-?\\s?\\d{3}\\s*${SEP}?\\s*([A-ZÀ-Ü][A-ZÀ-Ü' ]{2,40}?)\\s*(?:${SEP}|\\s)\\s*${UF}`);
+    m = r2.exec(linha);
+    if (m) { const c = limparNomeCidade_(m[1]); if (c) candidatos.push({ cidade: c, uf: m[2], score: 10, i: idx }); }
+
+    // 3) "NOME - UF", "NOME/UF", "NOME, UF"
+    const r3 = new RegExp(`([A-ZÀ-Ü][A-ZÀ-Ü' .]{2,60}?)\\s*${SEP}\\s*${UF}`, 'g');
+    while ((m = r3.exec(linha)) !== null) {
+      const c = limparNomeCidade_(m[1]);
+      if (c) candidatos.push({ cidade: c, uf: m[2], score: /CNPJ|CEP|END|RUA|AV|LOJA|BAIRRO/.test(linha) ? 7 : 5, i: idx });
+    }
+
+    // 4) fim da linha de endereço sem separador: "... CENTRO SANTA INES MA" (só se tiver CEP ou "END" na linha)
+    if (/CEP|END|RUA|AV |AVENIDA|RODOVIA/.test(linha)) {
+      const r4 = new RegExp(`([A-ZÀ-Ü][A-ZÀ-Ü' ]{2,40}?)\\s+${UF}\\s*$`);
+      m = r4.exec(linha);
+      if (m) { const c = limparNomeCidade_(m[1]); if (c) candidatos.push({ cidade: c, uf: m[2], score: 3, i: idx }); }
+    }
+  });
+
+  if (!candidatos.length) return '';
+  candidatos.sort((a, b) => (b.score - a.score) || (a.i - b.i));
+  const melhor = candidatos[0];
+  return `${tituloCidade_(melhor.cidade)} - ${melhor.uf}`;
+}
+
+// Fallback: localização do aparelho (GPS) -> cidade/UF (OpenStreetMap/Nominatim)
+function obterLocalPorGPS() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) { resolve(''); return; }
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      try {
+        const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${pos.coords.latitude}&lon=${pos.coords.longitude}&zoom=10&addressdetails=1&accept-language=pt-BR`;
+        const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        const j = await resp.json();
+        const a = (j && j.address) || {};
+        const cidade = a.city || a.town || a.village || a.municipality || a.city_district || '';
+        let uf = '';
+        const iso = a['ISO3166-2-lvl4'] || '';
+        if (/^BR-[A-Z]{2}$/.test(iso)) uf = iso.slice(3);
+        else uf = ESTADOS_UF[semAcentos_(a.state || '').toUpperCase()] || '';
+        resolve(cidade && uf ? `${cidade} - ${uf}` : '');
+      } catch (e) { resolve(''); }
+    }, () => resolve(''), { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 });
+  });
+}
+
+// ============================================================
 //  DRIVE / IMAGEM DO COMPROVANTE
 // ============================================================
 function extrairFileIdDrive(url) {
@@ -468,16 +570,18 @@ async function carregarCarteiraSuporte() {
   if (r && r.success) {
     carteiraGlobais = r.comprovantes;
     if (r.apagadosPorValidade > 0) showToast(`${r.apagadosPorValidade} comprovante(s) expirado(s) removido(s).`, 'info');
-    if (carteiraGlobais.length === 0) { tb.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-slate-400">Nenhum comprovante na carteira.</td></tr>'; return; }
+    if (carteiraGlobais.length === 0) { tb.innerHTML = '<tr><td colspan="7" class="p-4 text-center text-slate-400">Nenhum comprovante na carteira.</td></tr>'; return; }
     carteiraGlobais.forEach(c => {
       const diasVenc = 30 - Math.floor((new Date() - new Date(c.dataUpload)) / (1000 * 60 * 60 * 24));
       const temFoto = !!c.urlComprovante;
       const horaFormatada = formatarHoraVisao(c.horaDespesa);
       const valorNum = Number(String(c.valor || 0).replace(',', '.')) || 0;
+      const localTxt = c.localDespesa ? escaparTextoHtml(c.localDespesa) : '<span class="text-slate-300">—</span>';
       tb.innerHTML += `
         <tr class="hover:bg-slate-50 border-b">
           <td class="px-4 py-3 text-xs font-mono"><div class="flex items-center gap-3">${htmlMiniatura(c)}<span>${formatarDataVisao(c.dataDespesa)}${horaFormatada ? ' às ' + horaFormatada : ''}</span></div></td>
           <td class="px-4 py-3 text-xs font-bold text-slate-700">${c.categoria || ''}</td>
+          <td class="px-4 py-3 text-xs font-bold text-slate-600"><i class="fa-solid fa-location-dot text-slate-400 mr-1"></i>${localTxt}</td>
           <td class="px-4 py-3 text-xs font-bold uppercase text-slate-500">${c.lojaDebito || ''}</td>
           <td class="px-4 py-3 text-xs font-bold text-emerald-600">R$ ${valorNum.toFixed(2).replace('.', ',')}</td>
           <td class="px-4 py-3 text-xs text-center"><div class="flex flex-col items-center gap-1"><span class="text-amber-600 font-bold">${diasVenc} dia(s)</span>${temFoto ? '<span class="text-emerald-600 font-bold text-[10px]"><i class="fa-solid fa-image"></i> Foto ok</span>' : '<span class="text-slate-400 text-[10px]">Sem foto</span>'}</div></td>
@@ -502,6 +606,7 @@ function editarComprovanteCarteira(idComp) {
   // input type=number exige PONTO decimal (com vírgula o campo fica vazio)
   document.getElementById('editValor').value = (Number(String(item.valor || 0).replace(',', '.')) || 0).toFixed(2);
   document.getElementById('editLoja').value = item.lojaDebito || '';
+  document.getElementById('editLocal').value = item.localDespesa || '';
   document.getElementById('editCategoria').value = item.categoria || '';
   const img = document.getElementById('editPreviewImg');
   img.dataset.tentou = ''; img.dataset.id = idComp; img.style.display = '';
@@ -527,7 +632,7 @@ async function salvarEdicaoComprovante() {
     novoMime = matchMime ? matchMime[1] : (fileInput.files[0].type || 'image/jpeg');
   }
 
-  const data = { action: 'updateComprovante', idComprovante: idComp, login: userData.login, dataDespesa: document.getElementById('editData').value.trim(), horaDespesa: document.getElementById('editHora').value.trim(), valor: parseFloat(String(valorRaw).replace(',', '.')), lojaDebito: loja, categoria };
+  const data = { action: 'updateComprovante', idComprovante: idComp, login: userData.login, dataDespesa: document.getElementById('editData').value.trim(), horaDespesa: document.getElementById('editHora').value.trim(), valor: parseFloat(String(valorRaw).replace(',', '.')), lojaDebito: loja, categoria, localDespesa: document.getElementById('editLocal').value.trim() };
   if (novaImagem) { data.imagemBase64 = novaImagem; data.mimeType = novoMime; }
 
   const r = await fetchAPI(data, 'btnSalvarEdicao');
@@ -545,7 +650,7 @@ async function excluirComprovanteCarteira(idComp) {
 // ==================== OCR MODAL ====================
 function abrirModalOCR() {
   document.getElementById('modalOCR').classList.remove('hidden'); document.getElementById('ocrForm').classList.add('hidden'); document.getElementById('btnSalvarNota').classList.add('hidden'); document.getElementById('fileOCR').value = "";
-  document.getElementById('ocrData').value = ''; document.getElementById('ocrHora').value = ''; document.getElementById('ocrValor').value = ''; document.getElementById('ocrLoja').value = ''; document.getElementById('ocrCategoria').value = '';
+  document.getElementById('ocrData').value = ''; document.getElementById('ocrHora').value = ''; document.getElementById('ocrValor').value = ''; document.getElementById('ocrLoja').value = ''; document.getElementById('ocrCategoria').value = ''; document.getElementById('ocrLocal').value = '';
   ocrImagemBase64 = ''; ocrMimeType = 'image/jpeg'; ocrTextoExtraido = '';
   const previewContainer = document.getElementById('ocrPreviewContainer'), preview = document.getElementById('ocrPreview');
   if (previewContainer) previewContainer.classList.add('hidden'); if (preview) preview.src = '';
@@ -554,7 +659,7 @@ function abrirModalOCR() {
 async function processarOCR(event) {
   const file = event.target.files[0]; if (!file) return;
   ocrTextoExtraido = '';
-  document.getElementById('ocrData').value = ''; document.getElementById('ocrHora').value = ''; document.getElementById('ocrValor').value = ''; document.getElementById('ocrLoja').value = ''; document.getElementById('ocrCategoria').value = '';
+  document.getElementById('ocrData').value = ''; document.getElementById('ocrHora').value = ''; document.getElementById('ocrValor').value = ''; document.getElementById('ocrLoja').value = ''; document.getElementById('ocrCategoria').value = ''; document.getElementById('ocrLocal').value = '';
   document.getElementById('ocrLoader').classList.remove('hidden'); document.getElementById('ocrForm').classList.add('hidden'); document.getElementById('btnSalvarNota').classList.add('hidden');
   const previewContainer = document.getElementById('ocrPreviewContainer'), preview = document.getElementById('ocrPreview');
   if (previewContainer) previewContainer.classList.add('hidden'); if (preview) preview.src = '';
@@ -569,15 +674,30 @@ async function processarOCR(event) {
       document.getElementById('ocrData').value = extrairDataDoTexto(ocrTextoExtraido);
       document.getElementById('ocrHora').value = extrairHoraDoTexto(ocrTextoExtraido);
       document.getElementById('ocrValor').value = extrairValorDoTexto(ocrTextoExtraido);
+
+      // LOCAL: 1º tenta ler do cupom (cidade - UF); 2º usa a localização do aparelho (GPS)
+      let local = extrairLocalDoTexto(ocrTextoExtraido), origemLocal = 'cupom';
+      if (!local) {
+        const loaderEl = document.getElementById('ocrLoader');
+        if (loaderEl) loaderEl.innerHTML = '<i class="fa-solid fa-location-crosshairs fa-beat text-2xl block mb-2"></i> Obtendo localização...';
+        local = await obterLocalPorGPS(); origemLocal = 'GPS';
+      }
+      document.getElementById('ocrLocal').value = local || '';
+
       const faltantes = [];
       if (!document.getElementById('ocrData').value) faltantes.push('data');
       if (!document.getElementById('ocrHora').value) faltantes.push('hora');
       if (!document.getElementById('ocrValor').value) faltantes.push('valor');
+      if (!local) faltantes.push('local');
       if (faltantes.length > 0) showToast(`Não consegui ler: ${faltantes.join(', ')}. Preencha manualmente.`, 'warning');
-      else showToast('Dados lidos! Confira o valor e preencha Categoria e Loja.', 'success');
+      else showToast(`Dados lidos! Local obtido pelo ${origemLocal}. Confira e preencha Categoria e Loja.`, 'success');
     } catch (e) { showToast('Falha no OCR. Preencha manualmente.', 'warning'); }
   } catch (e) { ocrImagemBase64 = ''; showToast('Erro ao carregar imagem.', 'error'); }
-  finally { document.getElementById('ocrLoader').classList.add('hidden'); document.getElementById('ocrForm').classList.remove('hidden'); document.getElementById('btnSalvarNota').classList.remove('hidden'); }
+  finally {
+    const loaderEl = document.getElementById('ocrLoader');
+    if (loaderEl) { loaderEl.classList.add('hidden'); loaderEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin text-2xl block mb-2"></i> Lendo...'; }
+    document.getElementById('ocrForm').classList.remove('hidden'); document.getElementById('btnSalvarNota').classList.remove('hidden');
+  }
 }
 
 async function salvarNotaNaCarteira() {
@@ -592,7 +712,7 @@ async function salvarNotaNaCarteira() {
   let dataDespesa = document.getElementById('ocrData').value.trim();
   if (!dataDespesa) dataDespesa = new Date().toLocaleDateString('pt-BR');
 
-  const data = { action: 'saveComprovante', login: userData.login, dataDespesa, horaDespesa: document.getElementById('ocrHora').value.trim(), valor: parseFloat(String(valorRaw).replace(',', '.')), lojaDebito: loja, categoria, ocrConteudo: String(ocrTextoExtraido || '').slice(0, 5000), imagemBase64: ocrImagemBase64, mimeType: ocrMimeType };
+  const data = { action: 'saveComprovante', login: userData.login, dataDespesa, horaDespesa: document.getElementById('ocrHora').value.trim(), valor: parseFloat(String(valorRaw).replace(',', '.')), lojaDebito: loja, categoria, localDespesa: document.getElementById('ocrLocal').value.trim(), ocrConteudo: String(ocrTextoExtraido || '').slice(0, 5000), imagemBase64: ocrImagemBase64, mimeType: ocrMimeType };
   const r = await fetchAPI(data, 'btnSalvarNota');
   if (r && r.success) {
     document.getElementById('modalOCR').classList.add('hidden');
@@ -653,7 +773,7 @@ function renderItensViagem() {
   const podeVerComprovante = isGestao || isColab;
   const emEdicao = (viagemAtual.status === 'ABERTO' || viagemAtual.status === 'SOLICITAR CORRECAO');
   let total = 0;
-  if (viagemAtual.itens.length === 0) { tb.innerHTML = '<tr><td colspan="6" class="p-6 text-center text-slate-400">Nenhum ticket anexado.</td></tr>'; document.getElementById('detalheTotalValor').textContent = 'R$ 0,00'; return; }
+  if (viagemAtual.itens.length === 0) { tb.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-400">Nenhum ticket anexado.</td></tr>'; document.getElementById('detalheTotalValor').textContent = 'R$ 0,00'; return; }
   viagemAtual.itens.sort((a, b) => chaveDataOrdenacao(a.dataDespesa) - chaveDataOrdenacao(b.dataDespesa));
   viagemAtual.itens.forEach(item => {
     const valorNum = Number(String(item.valor || 0).replace(',', '.')) || 0;
@@ -670,7 +790,8 @@ function renderItensViagem() {
         </div></div></td>`;
       } else { celulaComprovante = '<td class="px-4 py-3 text-xs text-center text-amber-600 font-bold">Sem imagem</td>'; }
     }
-    tb.innerHTML += `<tr class="hover:bg-slate-50 border-b"><td class="px-4 py-3 text-xs">${formatarDataVisao(item.dataDespesa)}</td><td class="px-4 py-3 text-xs font-bold text-slate-700">${item.categoria || ''}</td><td class="px-4 py-3 text-xs uppercase font-bold text-slate-500">${item.lojaDebito || ''}</td><td class="px-4 py-3 text-xs text-right font-bold text-emerald-600">R$ ${valorNum.toFixed(2).replace('.', ',')}</td>${celulaComprovante}<td class="px-4 py-3 text-xs text-center">${btnAcao}</td></tr>`;
+    const localTxt = item.localDespesa ? escaparTextoHtml(item.localDespesa) : '<span class="text-slate-300">—</span>';
+    tb.innerHTML += `<tr class="hover:bg-slate-50 border-b"><td class="px-4 py-3 text-xs">${formatarDataVisao(item.dataDespesa)}</td><td class="px-4 py-3 text-xs font-bold text-slate-700">${item.categoria || ''}</td><td class="px-4 py-3 text-xs font-bold text-slate-600"><i class="fa-solid fa-location-dot text-slate-400 mr-1"></i>${localTxt}</td><td class="px-4 py-3 text-xs uppercase font-bold text-slate-500">${item.lojaDebito || ''}</td><td class="px-4 py-3 text-xs text-right font-bold text-emerald-600">R$ ${valorNum.toFixed(2).replace('.', ',')}</td>${celulaComprovante}<td class="px-4 py-3 text-xs text-center">${btnAcao}</td></tr>`;
   });
   document.getElementById('detalheTotalValor').textContent = `R$ ${total.toFixed(2).replace('.', ',')}`;
 }
@@ -698,7 +819,7 @@ function exportarRelatorioViagem() {
     const cat = item.categoria || 'Sem categoria';
     porCategoria[cat] = (porCategoria[cat] || 0) + valor;
     const hora = formatarHoraVisao(item.horaDespesa);
-    return `<tr><td class="c">${i + 1}</td><td>${escaparTextoHtml(formatarDataVisao(item.dataDespesa))}</td><td class="c">${escaparTextoHtml(hora || '—')}</td><td>${escaparTextoHtml(cat)}</td><td class="c up">${escaparTextoHtml(item.lojaDebito || '')}</td><td class="r">${formatarMoedaBR(valor)}</td></tr>`;
+    return `<tr><td class="c">${i + 1}</td><td>${escaparTextoHtml(formatarDataVisao(item.dataDespesa))}</td><td class="c">${escaparTextoHtml(hora || '—')}</td><td>${escaparTextoHtml(item.localDespesa || '—')}</td><td>${escaparTextoHtml(cat)}</td><td class="c up">${escaparTextoHtml(item.lojaDebito || '')}</td><td class="r">${formatarMoedaBR(valor)}</td></tr>`;
   }).join('');
 
   const linhasResumo = Object.keys(porCategoria).sort().map(cat => `<tr><td>${escaparTextoHtml(cat)}</td><td class="r">${formatarMoedaBR(porCategoria[cat])}</td></tr>`).join('');
@@ -753,9 +874,9 @@ tfoot td{background:#ecfdf5;font-weight:bold;font-size:13px;color:#047857}
 
 <h2>Despesas (Ordem Cronológica)</h2>
 <table>
-  <thead><tr><th class="c" style="width:32px">#</th><th>Data</th><th class="c">Hora</th><th>Categoria</th><th class="c">Loja Débito</th><th class="r">Valor</th></tr></thead>
+  <thead><tr><th class="c" style="width:32px">#</th><th>Data</th><th class="c">Hora</th><th>Local</th><th>Categoria</th><th class="c">Loja Débito</th><th class="r">Valor</th></tr></thead>
   <tbody>${linhas}</tbody>
-  <tfoot><tr><td colspan="5" class="r">TOTAL (${itens.length} despesa${itens.length > 1 ? 's' : ''})</td><td class="r">${formatarMoedaBR(total)}</td></tr></tfoot>
+  <tfoot><tr><td colspan="6" class="r">TOTAL (${itens.length} despesa${itens.length > 1 ? 's' : ''})</td><td class="r">${formatarMoedaBR(total)}</td></tr></tfoot>
 </table>
 
 <h2>Resumo por Categoria</h2>
@@ -792,7 +913,7 @@ async function abrirModalAnexarTickets() {
     r.comprovantes.forEach(c => {
       const temFoto = !!c.urlComprovante;
       const valorNum = Number(String(c.valor || 0).replace(',', '.')) || 0;
-      div.innerHTML += `<label class="flex items-center gap-3 p-2 bg-white rounded border cursor-pointer hover:border-blue-400"><input type="checkbox" value="${c.idComprovante}" class="chk-ticket h-4 w-4 accent-blue-600"><div class="text-xs"><span class="font-bold text-slate-800">${c.categoria || ''}</span> (${formatarDataVisao(c.dataDespesa)})<span class="block text-[10px] text-slate-500">Debitar: <b>${c.lojaDebito || ''}</b> | R$ ${valorNum.toFixed(2).replace('.', ',')} ${temFoto ? '| <span class="text-emerald-600 font-bold">Foto ok</span>' : '| <span class="text-amber-600 font-bold">Sem foto</span>'}</span></div></label>`;
+      div.innerHTML += `<label class="flex items-center gap-3 p-2 bg-white rounded border cursor-pointer hover:border-blue-400"><input type="checkbox" value="${c.idComprovante}" class="chk-ticket h-4 w-4 accent-blue-600"><div class="text-xs"><span class="font-bold text-slate-800">${c.categoria || ''}</span> (${formatarDataVisao(c.dataDespesa)})${c.localDespesa ? ' - ' + escaparTextoHtml(c.localDespesa) : ''}<span class="block text-[10px] text-slate-500">Debitar: <b>${c.lojaDebito || ''}</b> | R$ ${valorNum.toFixed(2).replace('.', ',')} ${temFoto ? '| <span class="text-emerald-600 font-bold">Foto ok</span>' : '| <span class="text-amber-600 font-bold">Sem foto</span>'}</span></div></label>`;
     });
     document.getElementById('modalAnexarTickets').classList.remove('hidden');
   } else { showToast('Carteira vazia.', 'info'); }
