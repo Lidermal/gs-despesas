@@ -1,13 +1,43 @@
 const API_URL = "https://script.google.com/macros/s/AKfycbyv6rztF_a5ePHzRhzCMJDawDOHhF-le_3MgvoeMY2WUGjVRQBPmt2cSuV6Mp71MGnpUQ/exec";
+const VIAGENS_URL = "https://viagens-gs.vercel.app/";
 const TEMPO_SESSAO_MS = 4 * 60 * 60 * 1000;
+const POLL_MS = 8000; // atualização automática
 
 let userData = null, viagensGlobais = [], viagemAtual = null, filtroLojaSelecionada = "TODAS";
 let ocrImagemBase64 = '', ocrMimeType = 'image/jpeg', ocrTextoExtraido = '';
 let visualizadorIdAtual = null;
 const cacheImagens = {};
+let pollTimer = null, polling = false, pollPromise = null, jaCarregou = false, lastSig = '', busy = 0;
+let tecnicos = [], tecnicosSel = new Set();
+
+const $ = (id) => document.getElementById(id);
+const RX_GESTAO = /Coordena|Ger[eê]ncia/i;
+function isGestaoUser() { return !!userData && RX_GESTAO.test(userData.nivel || ''); }
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 function escaparAtributoHtml(valor) { return String(valor || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+// ===== LOGIN ÚNICO ENTRE SISTEMAS (recebe a sessão vinda do viagens-gs) =====
+(function consumirSSO() {
+  const m = location.hash.match(/^#sso=(.+)$/);
+  if (!m) return;
+  try {
+    const o = JSON.parse(decodeURIComponent(escape(atob(m[1]))));
+    const t = parseInt(o.t, 10);
+    if (o && o.u && o.u.login && t && (Date.now() - t < TEMPO_SESSAO_MS)) {
+      localStorage.setItem('usuarioDespesasAtivo', JSON.stringify(o.u));
+      localStorage.setItem('loginDespesasTimestamp', String(t));
+    }
+  } catch (e) {}
+  history.replaceState(null, '', location.pathname + location.search);
+})();
+
+function irParaViagens() {
+  if (!userData) return;
+  const pacote = { u: userData, t: localStorage.getItem('loginDespesasTimestamp') || Date.now().toString() };
+  const payload = btoa(unescape(encodeURIComponent(JSON.stringify(pacote))));
+  window.location.href = VIAGENS_URL + '#sso=' + payload;
+}
 
 function formatarDataVisao(valor) {
   const s = String(valor || '');
@@ -466,8 +496,9 @@ window.onload = () => {
   if (savedUser && loginTime && (Date.now() - parseInt(loginTime) < TEMPO_SESSAO_MS)) { userData = JSON.parse(savedUser); iniciarSistema(); } else { logout(); }
 };
 function logout() {
+  pararPolling();
   localStorage.removeItem('usuarioDespesasAtivo'); localStorage.removeItem('loginDespesasTimestamp');
-  userData = null; viagemAtual = null; viagensGlobais = [];
+  userData = null; viagemAtual = null; viagensGlobais = []; jaCarregou = false; lastSig = ''; tecnicos = [];
   document.getElementById('globalHeader').classList.add('hidden'); document.getElementById('mainContent').classList.add('hidden');
   document.getElementById('viagemDetalheView').classList.add('hidden'); document.getElementById('authView').classList.remove('hidden');
 }
@@ -513,6 +544,12 @@ async function fetchAPI(data, btnId = null, textId = null, originalText = null) 
   finally { if (btn) { btn.disabled = false; if (textId) document.getElementById(textId).innerHTML = originalText; } }
 }
 
+// Requisição "silenciosa" (sem toasts) usada pela sincronização
+async function postAPI(data) {
+  try { const r = await fetch(API_URL, { method: 'POST', body: JSON.stringify(data) }); return await r.json(); }
+  catch (e) { return null; }
+}
+
 // ==================== AUTH & PAINEL ====================
 function toggleAuthView(v) {
   if (v === 'register') { document.getElementById('loginSection').classList.add('hidden'); document.getElementById('registerSection').classList.remove('hidden'); }
@@ -534,12 +571,73 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
 function iniciarSistema() {
   document.getElementById('authView').classList.add('hidden'); document.getElementById('globalHeader').classList.remove('hidden'); document.getElementById('mainContent').classList.remove('hidden');
   document.getElementById('navUserName').textContent = `${userData.nome} ${userData.sobrenome}`; document.getElementById('navUserRole').textContent = `${userData.nivel}`;
+  jaCarregou = false; lastSig = ''; viagensGlobais = [];
   recarregarDashboard();
+  iniciarPolling();
 }
 
-async function recarregarDashboard() {
-  document.getElementById('viagemDetalheView').classList.add('hidden'); document.getElementById('mainContent').classList.remove('hidden');
-  const isGestao = (userData.nivel === 'Coordenação GS' || userData.nivel === 'Gerência GS');
+// ==================== SINCRONIZAÇÃO AUTOMÁTICA ====================
+function iniciarPolling() {
+  pararPolling();
+  pollTimer = setInterval(() => {
+    if (!userData) return;
+    const t = parseInt(localStorage.getItem('loginDespesasTimestamp') || '0', 10);
+    if (t && Date.now() - t >= TEMPO_SESSAO_MS) { showToast('Sua sessão expirou por segurança.', 'warning', 'Tempo Esgotado'); logout(); return; }
+    if (!document.hidden && !polling && busy === 0) atualizarViagens();
+  }, POLL_MS);
+}
+function pararPolling() { if (pollTimer) clearInterval(pollTimer); pollTimer = null; }
+document.addEventListener('visibilitychange', () => { if (!document.hidden && userData) atualizarViagens(); });
+window.addEventListener('online', () => { if (userData) atualizarViagens(); });
+
+async function atualizarViagens() {
+  if (!userData) return;
+  while (polling) await pollPromise;
+  if (!userData) return;
+  polling = true;
+  pollPromise = (async () => {
+    const r = await postAPI({ action: 'getDespesasViagens', login: userData.login, nivel: userData.nivel });
+    if (!userData) return;
+    if (r && r.success) aplicarViagens(r.viagens || []);
+    else if (!jaCarregou && viagensGlobais.length === 0) document.getElementById('gridViagens').innerHTML = '<div class="col-span-full text-center py-10 text-amber-600"><i class="fa-solid fa-wifi mr-1"></i> Não foi possível carregar. Tentando novamente...</div>';
+  })();
+  try { await pollPromise; } finally { polling = false; }
+}
+
+function detectarMudancas(antigas, novas) {
+  const mapa = {}; antigas.forEach(v => { mapa[v.idViagem] = v; });
+  novas.forEach(v => {
+    const o = mapa[v.idViagem];
+    if (!o) { if (String(v.criadoPor).toLowerCase() !== String(userData.login).toLowerCase()) showToast(`${v.sigla} - ${v.motivo}`, 'info', 'Nova viagem'); }
+    else if (o.status !== v.status) showToast(`${v.sigla}: ${o.status} → ${v.status}`, 'info', 'Status atualizado');
+    else if (isGestaoUser() && (v.itens || []).length > (o.itens || []).length) showToast(`${v.sigla}: nova despesa lançada.`, 'info', 'Ao vivo');
+  });
+}
+
+function aplicarViagens(novas) {
+  if (busy > 0) return; // ação do usuário em andamento: não sobrescreve a tela otimista
+  const sig = JSON.stringify(novas);
+  if (sig === lastSig && jaCarregou) return;
+  lastSig = sig;
+  if (jaCarregou) detectarMudancas(viagensGlobais, novas);
+  viagensGlobais = novas; jaCarregou = true;
+  if (filtroLojaSelecionada !== 'TODAS' && !novas.some(v => v.sigla === filtroLojaSelecionada)) filtroLojaSelecionada = 'TODAS';
+  renderFiltrosSiglas(); renderViagensGrid();
+  if (viagemAtual) {
+    const nova = novas.find(v => v.idViagem === viagemAtual.idViagem);
+    if (!nova) { showToast('Esta viagem foi removida.', 'warning'); mostrarLista(); }
+    else { viagemAtual = nova; renderDetalhe(); }
+  }
+}
+
+function mostrarLista() {
+  viagemAtual = null;
+  document.getElementById('viagemDetalheView').classList.add('hidden');
+  document.getElementById('mainContent').classList.remove('hidden');
+}
+
+function montarCabecalhoPainel() {
+  const isGestao = isGestaoUser();
   document.getElementById('dashTitle').innerHTML = isGestao ? `<i class="fa-solid fa-user-shield text-emerald-600 mr-2"></i> Painel da Gestão` : `<i class="fa-solid fa-plane-departure text-emerald-600 mr-2"></i> Minhas Viagens`;
   document.getElementById('dashSubtitle').textContent = isGestao ? "Acompanhe e autorize reembolsos organizados por sigla da loja." : "Receba viagens criadas pela coordenação e envie seus comprovantes.";
   const btnArea = document.getElementById('dashActionButtons'); btnArea.innerHTML = '';
@@ -547,22 +645,29 @@ async function recarregarDashboard() {
     btnArea.innerHTML = `<button onclick="abrirModalCriarViagem()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded shadow text-sm transition"><i class="fa-solid fa-plus mr-2"></i> Criar Número da Viagem</button>`;
     carregarUsuariosParaSelect();
   }
-  const r = await fetchAPI({ action: 'getDespesasViagens', login: userData.login, nivel: userData.nivel });
-  if (r && r.success) { viagensGlobais = r.viagens; renderFiltrosSiglas(); renderViagensGrid(); }
+}
+
+async function recarregarDashboard() {
+  mostrarLista();
+  montarCabecalhoPainel();
+  if (viagensGlobais.length) { renderFiltrosSiglas(); renderViagensGrid(); }
+  else document.getElementById('gridViagens').innerHTML = '<div class="col-span-full text-center py-10 text-slate-500"><i class="fa-solid fa-spinner fa-spin text-2xl"></i><br>Carregando viagens...</div>';
+  await atualizarViagens();
 }
 
 function renderFiltrosSiglas() {
-  const div = document.getElementById('filtroSiglasLojas'); div.innerHTML = '';
+  const div = document.getElementById('filtroSiglasLojas'); let html = '';
   const siglas = ["TODAS"]; viagensGlobais.forEach(v => { if (!siglas.includes(v.sigla)) siglas.push(v.sigla); });
   siglas.forEach(s => {
     const active = (filtroLojaSelecionada === s) ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-slate-100 border';
-    div.innerHTML += `<button onclick="filtrarPorLoja('${s}')" class="${active} px-4 py-1.5 rounded-full font-bold text-xs shadow-sm transition uppercase whitespace-nowrap">${s}</button>`;
+    html += `<button onclick="filtrarPorLoja('${s}')" class="${active} px-4 py-1.5 rounded-full font-bold text-xs shadow-sm transition uppercase whitespace-nowrap">${s}</button>`;
   });
+  div.innerHTML = html;
 }
 function filtrarPorLoja(sigla) { filtroLojaSelecionada = sigla; renderFiltrosSiglas(); renderViagensGrid(); }
 
 function renderViagensGrid() {
-  const grid = document.getElementById('gridViagens'); grid.innerHTML = '';
+  const grid = document.getElementById('gridViagens'); let html = '';
   let lista = viagensGlobais;
   if (filtroLojaSelecionada !== "TODAS") lista = lista.filter(v => v.sigla === filtroLojaSelecionada);
   if (lista.length === 0) { grid.innerHTML = `<div class="col-span-full text-center py-10 bg-white border border-dashed rounded text-slate-400"><i class="fa-solid fa-folder-open text-3xl mb-2"></i><br>Nenhuma viagem encontrada.</div>`; return; }
@@ -573,35 +678,90 @@ function renderViagensGrid() {
     if (v.status === 'SOLICITAR CORRECAO') badge = 'bg-red-100 text-red-700 border-red-200';
     if (v.status === 'FECHADA' || v.status === 'ARQUIVADA') badge = 'bg-emerald-100 text-emerald-700 border-emerald-200';
     if (v.status === 'CANCELADO') badge = 'bg-slate-200 text-slate-500 line-through';
-    grid.innerHTML += `<div onclick="abrirViagemDetalhe('${v.idViagem}')" class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-400 cursor-pointer transition flex flex-col justify-between"><div><div class="flex justify-between items-start mb-2"><span class="bg-slate-900 text-emerald-400 px-3 py-1 rounded text-xs font-black uppercase tracking-wider">${v.sigla}</span><span class="${badge} text-[10px] font-bold px-2 py-0.5 rounded border uppercase">${v.status}</span></div><h3 class="text-base font-bold text-slate-800 line-clamp-2 mt-2" title="${v.motivo}">${v.motivo}</h3></div><div class="mt-4 pt-3 border-t text-xs text-slate-500 flex justify-between items-end"><div><p class="text-[11px]">Solicitou: <b>${v.criadoPor}</b></p><p class="text-[11px]">Técnico: <b>${v.colaborador}</b></p></div><span class="text-emerald-600 font-bold text-xs"><i class="fa-solid fa-paperclip"></i> ${v.itens.length} despesa(s)</span></div></div>`;
+    html += `<div onclick="abrirViagemDetalhe('${v.idViagem}')" class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-400 cursor-pointer transition flex flex-col justify-between"><div><div class="flex justify-between items-start mb-2"><span class="bg-slate-900 text-emerald-400 px-3 py-1 rounded text-xs font-black uppercase tracking-wider">${v.sigla}</span><span class="${badge} text-[10px] font-bold px-2 py-0.5 rounded border uppercase">${v.status}</span></div><h3 class="text-base font-bold text-slate-800 line-clamp-2 mt-2" title="${escaparAtributoHtml(v.motivo)}">${escaparTextoHtml(v.motivo)}</h3></div><div class="mt-4 pt-3 border-t text-xs text-slate-500 flex justify-between items-end"><div><p class="text-[11px]">Solicitou: <b>${v.criadoPor}</b></p><p class="text-[11px]">Técnico: <b>${v.colaborador}</b></p></div><span class="text-emerald-600 font-bold text-xs"><i class="fa-solid fa-paperclip"></i> ${v.itens.length} despesa(s)</span></div></div>`;
   });
+  grid.innerHTML = html;
 }
 
-// ==================== COORDENAÇÃO ====================
+// ==================== COORDENAÇÃO: CRIAR VIAGEM (vários técnicos) ====================
 async function carregarUsuariosParaSelect() {
-  const r = await fetchAPI({ action: 'getUsers' });
-  if (r.success) {
-    const sel = document.getElementById('novaViagemColaborador'); sel.innerHTML = '<option value="">Selecione o técnico...</option>';
-    r.users.forEach(u => { sel.innerHTML += `<option value="${u.login}">${u.nome} (${u.login})</option>`; });
-  }
+  if (tecnicos.length) return;
+  const r = await postAPI({ action: 'getUsers' });
+  if (r && r.success) tecnicos = (r.users || []).filter(u => !RX_GESTAO.test(u.nivel || ''));
 }
-function abrirModalCriarViagem() { document.getElementById('modalCriarViagem').classList.remove('hidden'); }
+
+function checkOutrosViagem() { const v = $('novaViagemTipo').value; if (v === 'Outros') $('novaViagemOutros').classList.remove('hidden'); else { $('novaViagemOutros').classList.add('hidden'); $('novaViagemOutros').value = ''; } }
+
+async function abrirModalCriarViagem() {
+  $('novaViagemSigla').value = ''; $('novaViagemMotivo').value = ''; $('novaViagemOutros').value = ''; $('buscaTecnico').value = '';
+  $('novaViagemTipo').value = 'Inauguração'; checkOutrosViagem();
+  tecnicosSel = new Set();
+  $('modalCriarViagem').classList.remove('hidden');
+  $('listaTecnicos').innerHTML = '<p class="text-xs text-slate-400 text-center py-3"><i class="fa-solid fa-spinner fa-spin mr-1"></i> Carregando técnicos...</p>';
+  await carregarUsuariosParaSelect();
+  renderListaTecnicos();
+}
+function fecharModalCriarViagem() { $('modalCriarViagem').classList.add('hidden'); }
+
+function atualizarContTecnicos() { $('contTecnicos').textContent = `(${tecnicosSel.size} selecionado${tecnicosSel.size === 1 ? '' : 's'})`; }
+
+function listaTecnicosVisiveis() {
+  const q = ($('buscaTecnico').value || '').trim().toLowerCase();
+  return tecnicos.filter(u => (String(u.nome || '') + ' ' + String(u.login || '')).toLowerCase().includes(q));
+}
+
+function renderListaTecnicos() {
+  const box = $('listaTecnicos'); box.innerHTML = '';
+  const lista = listaTecnicosVisiveis();
+  if (!lista.length) { box.innerHTML = '<p class="text-xs text-slate-400 text-center py-3">Nenhum técnico encontrado.</p>'; atualizarContTecnicos(); return; }
+  lista.forEach(u => {
+    const lb = document.createElement('label');
+    lb.className = 'flex items-center gap-2 px-3 py-2 border-b text-sm cursor-pointer hover:bg-slate-50';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'h-4 w-4 accent-emerald-600'; cb.checked = tecnicosSel.has(u.login);
+    cb.onchange = () => { if (cb.checked) tecnicosSel.add(u.login); else tecnicosSel.delete(u.login); atualizarContTecnicos(); };
+    const sp = document.createElement('span'); sp.innerHTML = `<b>${escaparTextoHtml(u.nome)}</b> <span class="text-[11px] text-slate-400 font-mono">${escaparTextoHtml(u.login)}</span>`;
+    lb.appendChild(cb); lb.appendChild(sp); box.appendChild(lb);
+  });
+  atualizarContTecnicos();
+}
+
+function selecionarTodosTecnicos() {
+  const vis = listaTecnicosVisiveis();
+  const todos = vis.length && vis.every(u => tecnicosSel.has(u.login));
+  vis.forEach(u => { if (todos) tecnicosSel.delete(u.login); else tecnicosSel.add(u.login); });
+  renderListaTecnicos();
+}
+
 async function confirmarCriarViagem() {
-  const sigla = document.getElementById('novaViagemSigla').value.trim().toUpperCase();
-  const motivo = document.getElementById('novaViagemMotivo').value.trim();
-  const colab = document.getElementById('novaViagemColaborador').value;
-  if (!sigla || !motivo || !colab) { showToast('Preencha todos os campos!', 'warning'); return; }
-  const r = await fetchAPI({ action: 'createDespesaViagem', sigla, motivo, colaborador: colab, criadoPor: userData.login, nivel: userData.nivel }, 'btnCriarViagem');
-  if (r.success) { document.getElementById('modalCriarViagem').classList.add('hidden'); showToast('Viagem criada!', 'success'); recarregarDashboard(); }
-  else { showToast(r.message || 'Erro ao criar.', 'error'); }
+  const sigla = $('novaViagemSigla').value.trim().toUpperCase();
+  let tipo = $('novaViagemTipo').value;
+  if (tipo === 'Outros') tipo = $('novaViagemOutros').value.trim();
+  const motivo = $('novaViagemMotivo').value.trim() || tipo;
+  const logins = Array.from(tecnicosSel);
+  if (!sigla || !tipo) { showToast('Informe a sigla e a categoria.', 'warning'); return; }
+  if (!logins.length) { showToast('Selecione ao menos um técnico.', 'warning'); return; }
+  const btn = $('btnCriarViagem'); const original = btn.innerHTML; btn.disabled = true;
+  busy++;
+  const falhas = [];
+  try {
+    // Sequencial de propósito: evita gravações simultâneas na planilha (ids duplicados)
+    for (let i = 0; i < logins.length; i++) {
+      btn.innerHTML = `<span class="loader-small"></span> ${i + 1}/${logins.length}`;
+      const login = logins[i];
+      const a = await postAPI({ action: 'initProject', login, sigla, tipoProjeto: tipo });
+      const b = await postAPI({ action: 'createDespesaViagem', sigla, motivo, colaborador: login, criadoPor: userData.login, nivel: userData.nivel });
+      if (!(a && a.success) || !(b && b.success)) falhas.push(login);
+    }
+  } finally { busy--; btn.disabled = false; btn.innerHTML = original; }
+  fecharModalCriarViagem();
+  if (falhas.length) showToast(`Falha ao criar para: ${falhas.map(escaparTextoHtml).join(', ')}`, 'error', 'Atenção', 7000);
+  const ok = logins.length - falhas.length;
+  if (ok > 0) showToast(`Viagem ${sigla} criada para ${ok} técnico(s): despesas e projeto de horas abertos.`, 'success', 'Viagem Criada');
+  atualizarViagens();
 }
 
 // ==================== EDITAR / EXCLUIR DESPESA (DENTRO DA VIAGEM) ====================
-async function recarregarEReabrirViagem() {
-  const id = viagemAtual ? viagemAtual.idViagem : null;
-  await recarregarDashboard();
-  if (id) abrirViagemDetalhe(id);
-}
+async function recarregarEReabrirViagem() { await atualizarViagens(); }
 
 function editarComprovanteViagem(idComp) {
   const item = (viagemAtual && viagemAtual.itens || []).find(c => c.idComprovante === idComp);
@@ -641,16 +801,29 @@ async function salvarEdicaoComprovante() {
   const data = { action: 'updateComprovante', idComprovante: idComp, login: userData.login, dataDespesa: document.getElementById('editData').value.trim(), horaDespesa: document.getElementById('editHora').value.trim(), valor: parseFloat(String(valorRaw).replace(',', '.')), lojaDebito: loja, categoria, localDespesa: document.getElementById('editLocal').value.trim() };
   if (novaImagem) { data.imagemBase64 = novaImagem; data.mimeType = novoMime; }
 
-  const r = await fetchAPI(data, 'btnSalvarEdicao');
-  if (r && r.success) { delete cacheImagens[idComp]; document.getElementById('modalEditarComprovante').classList.add('hidden'); showToast('Despesa atualizada!', 'success'); recarregarEReabrirViagem(); }
+  busy++;
+  let r;
+  try { r = await fetchAPI(data, 'btnSalvarEdicao'); } finally { busy--; }
+  if (r && r.success) {
+    delete cacheImagens[idComp]; document.getElementById('modalEditarComprovante').classList.add('hidden'); showToast('Despesa atualizada!', 'success');
+    // atualização imediata na tela
+    const item = (viagemAtual && viagemAtual.itens || []).find(c => c.idComprovante === idComp);
+    if (item) { item.dataDespesa = data.dataDespesa; item.horaDespesa = data.horaDespesa; item.valor = data.valor; item.lojaDebito = data.lojaDebito; item.categoria = data.categoria; item.localDespesa = data.localDespesa; renderItensViagem(); }
+    atualizarViagens();
+  }
   else { showToast(r.message || 'Erro ao atualizar.', 'error'); }
 }
 
 async function excluirDespesaViagem(idComp) {
   if (!await showConfirm("Excluir esta despesa e a foto permanentemente?", { type: 'danger', icon: 'fa-trash' })) return;
-  const r = await fetchAPI({ action: 'deleteComprovante', idComprovante: idComp, login: userData.login });
-  if (r && r.success) { delete cacheImagens[idComp]; showToast('Despesa excluída.', 'success'); recarregarEReabrirViagem(); }
-  else { showToast((r && r.message) || 'Erro ao excluir.', 'error'); }
+  const backup = viagemAtual.itens.slice();
+  viagemAtual.itens = viagemAtual.itens.filter(c => c.idComprovante !== idComp);
+  renderAcoesViagem(); renderItensViagem(); renderViagensGrid();
+  busy++;
+  let r;
+  try { r = await fetchAPI({ action: 'deleteComprovante', idComprovante: idComp, login: userData.login }); } finally { busy--; }
+  if (r && r.success) { delete cacheImagens[idComp]; showToast('Despesa excluída.', 'success'); atualizarViagens(); }
+  else { viagemAtual.itens = backup; renderAcoesViagem(); renderItensViagem(); renderViagensGrid(); showToast((r && r.message) || 'Erro ao excluir.', 'error'); }
 }
 
 // ==================== OCR MODAL ====================
@@ -722,11 +895,14 @@ async function salvarNotaNaViagem() {
 
   const idViagem = viagemAtual.idViagem;
   const data = { action: 'saveComprovante', login: userData.login, idViagem, dataDespesa, horaDespesa: document.getElementById('ocrHora').value.trim(), valor: parseFloat(String(valorRaw).replace(',', '.')), lojaDebito: loja, categoria, localDespesa: document.getElementById('ocrLocal').value.trim(), ocrConteudo: String(ocrTextoExtraido || '').slice(0, 5000), imagemBase64: ocrImagemBase64, mimeType: ocrMimeType };
-  const r = await fetchAPI(data, 'btnSalvarNota');
-  if (!(r && r.success)) { showToast((r && r.message) || 'Falha ao salvar.', 'error'); return; }
-
-  // garante o vínculo com a viagem (caso o servidor ainda não vincule sozinho)
-  const vinculou = await vincularNotaNaViagem(idViagem, r);
+  busy++;
+  let r, vinculou = false;
+  try {
+    r = await fetchAPI(data, 'btnSalvarNota');
+    if (!(r && r.success)) { showToast((r && r.message) || 'Falha ao salvar.', 'error'); return; }
+    // garante o vínculo com a viagem (caso o servidor ainda não vincule sozinho)
+    vinculou = await vincularNotaNaViagem(idViagem, r);
+  } finally { busy--; }
   document.getElementById('modalOCR').classList.add('hidden');
   if (!vinculou) showToast('Nota salva, mas não consegui vinculá-la à viagem. Verifique o Apps Script.', 'warning');
   else if (r.urlComprovante) showToast('Despesa e foto salvas na viagem!', 'success');
@@ -754,8 +930,15 @@ async function vincularNotaNaViagem(idViagem, respostaSalvar) {
 
 // ==================== DETALHES DA VIAGEM ====================
 function abrirViagemDetalhe(id) {
-  viagemAtual = viagensGlobais.find(v => v.idViagem === id); if (!viagemAtual) return;
+  const v = viagensGlobais.find(x => x.idViagem === id); if (!v) return;
+  viagemAtual = v;
   document.getElementById('mainContent').classList.add('hidden'); document.getElementById('viagemDetalheView').classList.remove('hidden');
+  renderDetalhe();
+}
+
+// Desenha (ou redesenha, sem trocar de tela) o detalhe da viagem aberta
+function renderDetalhe() {
+  if (!viagemAtual) return;
   document.getElementById('detalheLojaSigla').textContent = `LOJA: ${viagemAtual.sigla}`;
   document.getElementById('detalheMotivo').textContent = viagemAtual.motivo;
   document.getElementById('detalheParticipantes').textContent = `Solicitado por: ${viagemAtual.criadoPor} | Responsável: ${viagemAtual.colaborador}`;
@@ -769,7 +952,7 @@ function abrirViagemDetalhe(id) {
 
 function renderAcoesViagem() {
   const area = document.getElementById('painelAcoesViagem'); area.innerHTML = '';
-  const isGestao = (userData.nivel === 'Coordenação GS' || userData.nivel === 'Gerência GS');
+  const isGestao = isGestaoUser();
   const isColab = (String(viagemAtual.colaborador).toLowerCase() === String(userData.login).toLowerCase());
   let direita = '';
 
@@ -798,12 +981,13 @@ function renderAcoesViagem() {
 function renderItensViagem() {
   const tb = document.getElementById('tbItensViagem'); tb.innerHTML = '';
   const isColab = (String(viagemAtual.colaborador).toLowerCase() === String(userData.login).toLowerCase());
-  const isGestao = (userData.nivel === 'Coordenação GS' || userData.nivel === 'Gerência GS');
+  const isGestao = isGestaoUser();
   const podeVerComprovante = isGestao || isColab;
   const emEdicao = (viagemAtual.status === 'ABERTO' || viagemAtual.status === 'SOLICITAR CORRECAO');
   let total = 0;
   if (viagemAtual.itens.length === 0) { tb.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-400">Nenhuma despesa lançada. Use “Tirar Foto / Enviar Nota”.</td></tr>'; document.getElementById('detalheTotalValor').textContent = 'R$ 0,00'; return; }
   viagemAtual.itens.sort((a, b) => chaveDataOrdenacao(a.dataDespesa) - chaveDataOrdenacao(b.dataDespesa));
+  let html = '';
   viagemAtual.itens.forEach(item => {
     const valorNum = Number(String(item.valor || 0).replace(',', '.')) || 0;
     total += valorNum;
@@ -820,8 +1004,9 @@ function renderItensViagem() {
       } else { celulaComprovante = '<td class="px-4 py-3 text-xs text-center text-amber-600 font-bold">Sem imagem</td>'; }
     }
     const localTxt = item.localDespesa ? escaparTextoHtml(item.localDespesa) : '<span class="text-slate-300">—</span>';
-    tb.innerHTML += `<tr class="hover:bg-slate-50 border-b"><td class="px-4 py-3 text-xs">${formatarDataVisao(item.dataDespesa)}</td><td class="px-4 py-3 text-xs font-bold text-slate-700">${item.categoria || ''}</td><td class="px-4 py-3 text-xs font-bold text-slate-600"><i class="fa-solid fa-location-dot text-slate-400 mr-1"></i>${localTxt}</td><td class="px-4 py-3 text-xs uppercase font-bold text-slate-500">${item.lojaDebito || ''}</td><td class="px-4 py-3 text-xs text-right font-bold text-emerald-600">R$ ${valorNum.toFixed(2).replace('.', ',')}</td>${celulaComprovante}<td class="px-4 py-3 text-xs text-center">${btnAcao}</td></tr>`;
+    html += `<tr class="hover:bg-slate-50 border-b"><td class="px-4 py-3 text-xs">${formatarDataVisao(item.dataDespesa)}</td><td class="px-4 py-3 text-xs font-bold text-slate-700">${item.categoria || ''}</td><td class="px-4 py-3 text-xs font-bold text-slate-600"><i class="fa-solid fa-location-dot text-slate-400 mr-1"></i>${localTxt}</td><td class="px-4 py-3 text-xs uppercase font-bold text-slate-500">${item.lojaDebito || ''}</td><td class="px-4 py-3 text-xs text-right font-bold text-emerald-600">R$ ${valorNum.toFixed(2).replace('.', ',')}</td>${celulaComprovante}<td class="px-4 py-3 text-xs text-center">${btnAcao}</td></tr>`;
   });
+  tb.innerHTML = html;
   document.getElementById('detalheTotalValor').textContent = `R$ ${total.toFixed(2).replace('.', ',')}`;
 }
 
@@ -935,22 +1120,34 @@ tfoot td{background:#ecfdf5;font-weight:bold;font-size:13px;color:#047857}
   showToast('Relatório pronto! Na janela de impressão escolha "Salvar como PDF".', 'info');
 }
 
+// ==================== STATUS / EXCLUSÃO DA VIAGEM (com atualização imediata) ====================
+async function mudarStatusOtimista(novoStatus, msgOk) {
+  const anterior = viagemAtual.status;
+  viagemAtual.status = novoStatus; renderDetalhe(); renderViagensGrid();
+  busy++;
+  let r;
+  try { r = await fetchAPI({ action: 'updateDespesaStatus', idViagem: viagemAtual.idViagem, status: novoStatus, login: userData.login, nivel: userData.nivel }); } finally { busy--; }
+  if (r && r.success) { showToast(msgOk, 'success'); atualizarViagens(); }
+  else { viagemAtual.status = anterior; renderDetalhe(); renderViagensGrid(); showToast((r && r.message) || 'Erro.', 'error'); }
+}
 
 async function enviarDespesasViagem() {
   if (!await showConfirm("Enviar despesas para aprovação?", { type: 'info' })) return;
-  const r = await fetchAPI({ action: 'updateDespesaStatus', idViagem: viagemAtual.idViagem, status: 'PENDENTE', login: userData.login, nivel: userData.nivel });
-  if (r.success) { showToast('Enviado!', 'success'); recarregarDashboard(); } else { showToast(r.message || 'Erro.', 'error'); }
+  mudarStatusOtimista('PENDENTE', 'Enviado!');
 }
 
-async function alterarStatusViagem(novoStatus) {
-  const r = await fetchAPI({ action: 'updateDespesaStatus', idViagem: viagemAtual.idViagem, status: novoStatus, login: userData.login, nivel: userData.nivel });
-  if (r.success) { showToast(`Status: ${novoStatus}!`, 'success'); recarregarDashboard(); } else { showToast(r.message || 'Erro.', 'error'); }
-}
+async function alterarStatusViagem(novoStatus) { mudarStatusOtimista(novoStatus, `Status: ${novoStatus}!`); }
 
 async function excluirViagem() {
   if (!await showConfirm("Excluir viagem permanentemente?", { type: 'danger' })) return;
-  const r = await fetchAPI({ action: 'deleteDespesaViagem', idViagem: viagemAtual.idViagem, login: userData.login, nivel: userData.nivel });
-  if (r.success) { showToast('Viagem excluída.', 'success'); recarregarDashboard(); } else { showToast(r.message || 'Erro.', 'error'); }
+  const backup = viagensGlobais, alvo = viagemAtual;
+  viagensGlobais = viagensGlobais.filter(v => v.idViagem !== alvo.idViagem);
+  mostrarLista(); renderFiltrosSiglas(); renderViagensGrid();
+  busy++;
+  let r;
+  try { r = await fetchAPI({ action: 'deleteDespesaViagem', idViagem: alvo.idViagem, login: userData.login, nivel: userData.nivel }); } finally { busy--; }
+  if (r && r.success) { showToast('Viagem excluída.', 'success'); atualizarViagens(); }
+  else { viagensGlobais = backup; renderFiltrosSiglas(); renderViagensGrid(); showToast((r && r.message) || 'Erro.', 'error'); }
 }
 
 function voltarDashboard() { recarregarDashboard(); }
