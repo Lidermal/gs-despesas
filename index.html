@@ -92,32 +92,6 @@
         <div class="mb-6 flex gap-2 overflow-x-auto pb-2 custom-scrollbar" id="filtroSiglasLojas"></div>
         <div id="gridViagens" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 fade-in"></div>
 
-        <!-- CARTEIRA -->
-        <div id="secaoCarteiraSuporte" class="mt-12 hidden fade-in bg-white rounded-xl shadow-sm border p-6">
-            <div class="flex justify-between items-center mb-6">
-                <div>
-                    <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-wallet text-amber-500 mr-2"></i> Carteira Temporária (30 dias)</h3>
-                    <p class="text-xs text-slate-500">Suba fotos dos cupons. Após 30 dias, registros não vinculados são apagados.</p>
-                </div>
-                <button onclick="abrirModalOCR()" class="bg-amber-500 hover:bg-amber-600 text-white font-bold py-2 px-4 rounded shadow text-sm"><i class="fa-solid fa-camera mr-2"></i> Tirar Foto / Enviar Nota</button>
-            </div>
-            <div class="overflow-auto custom-scrollbar border rounded">
-                <table class="min-w-full text-sm text-left">
-                    <thead class="bg-slate-100 border-b">
-                        <tr>
-                            <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Data & Hora</th>
-                            <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Categoria</th>
-                            <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Local</th>
-                            <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Loja Débito</th>
-                            <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Valor (R$)</th>
-                            <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px] text-center">Validade</th>
-                            <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px] text-center">Ações</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tbCarteira" class="divide-y divide-slate-100"></tbody>
-                </table>
-            </div>
-        </div>
     </main>
 
     <!-- DETALHE VIAGEM -->
@@ -173,10 +147,10 @@
     <!-- MODAL OCR -->
     <div id="modalOCR" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
         <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-lg border-t-4 border-amber-500 max-h-[90vh] overflow-y-auto">
-            <h3 class="text-lg font-bold text-slate-800 mb-2"><i class="fa-solid fa-camera text-amber-500 mr-2"></i> Leitura OCR</h3>
+            <h3 class="text-lg font-bold text-slate-800 mb-2"><i class="fa-solid fa-camera text-amber-500 mr-2"></i> Enviar Nota para a Viagem</h3>
             <p class="text-xs text-slate-500 mb-4">Envie a foto. <b>Data, hora, valor e local (cidade - UF)</b> são lidos automaticamente. <b>Categoria e Loja</b> são manuais.</p>
             <input type="file" id="fileOCR" accept="image/*" class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100 mb-4" onchange="processarOCR(event)">
-            <div id="ocrPreviewContainer" class="hidden mb-4 text-center bg-slate-50 border rounded p-2"><img id="ocrPreview" class="max-h-56 mx-auto rounded shadow-sm" alt="Preview"><p class="text-[10px] text-slate-500 mt-2">Esta imagem será enviada ao Google Drive.</p></div>
+            <div id="ocrPreviewContainer" class="hidden mb-4 text-center bg-slate-50 border rounded p-2"><img id="ocrPreview" class="max-h-56 mx-auto rounded shadow-sm" alt="Preview"><p class="text-[10px] text-slate-500 mt-2">Esta imagem será salva no Google Drive e vinculada a esta viagem.</p></div>
             <div id="ocrLoader" class="hidden text-center py-6 text-amber-600 font-bold text-sm"><i class="fa-solid fa-spinner fa-spin text-2xl block mb-2"></i> Lendo...</div>
             <div id="ocrForm" class="hidden space-y-3 border-t pt-4">
                 <div class="grid grid-cols-2 gap-3">
@@ -192,7 +166,7 @@
             </div>
             <div class="flex justify-end gap-2 mt-6">
                 <button onclick="document.getElementById('modalOCR').classList.add('hidden')" class="px-4 py-2 text-sm font-bold text-slate-500">Cancelar</button>
-                <button onclick="salvarNotaNaCarteira()" id="btnSalvarNota" class="hidden px-4 py-2 text-sm font-bold bg-amber-500 hover:bg-amber-600 text-white rounded">Guardar</button>
+                <button onclick="salvarNotaNaViagem()" id="btnSalvarNota" class="hidden px-4 py-2 text-sm font-bold bg-amber-500 hover:bg-amber-600 text-white rounded">Guardar</button>
             </div>
         </div>
     </div>
@@ -220,19 +194,6 @@
             <div class="flex justify-end gap-2 mt-6">
                 <button onclick="document.getElementById('modalEditarComprovante').classList.add('hidden')" class="px-4 py-2 text-sm font-bold text-slate-500">Cancelar</button>
                 <button onclick="salvarEdicaoComprovante()" id="btnSalvarEdicao" class="px-4 py-2 text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white rounded">Salvar Alterações</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- MODAL ANEXAR TICKETS -->
-    <div id="modalAnexarTickets" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
-        <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-md border-t-4 border-blue-600">
-            <h3 class="text-lg font-bold text-slate-800 mb-2"><i class="fa-solid fa-paperclip text-blue-600 mr-2"></i> Inserir Tickets</h3>
-            <p class="text-xs text-slate-500 mb-4">Selecione os comprovantes da carteira:</p>
-            <div id="listaTicketsDisponiveis" class="max-h-60 overflow-y-auto border rounded p-2 bg-slate-50 space-y-2 mb-4"></div>
-            <div class="flex justify-end gap-2">
-                <button onclick="document.getElementById('modalAnexarTickets').classList.add('hidden')" class="px-4 py-2 text-sm font-bold text-slate-500">Cancelar</button>
-                <button onclick="confirmarAnexoTickets()" id="btnConfirmarAnexos" class="px-4 py-2 text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white rounded">Anexar</button>
             </div>
         </div>
     </div>
@@ -272,6 +233,6 @@
         </div>
     </div>
 
-    <script src="despesas.js?v=local2"></script>
+    <script src="despesas.js?v=viagem3"></script>
 </body>
 </html>
