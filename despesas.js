@@ -423,46 +423,6 @@ async function imprimirComprovante(idComp) {
   if (im.complete) setTimeout(imprimir, 150); else im.onload = () => setTimeout(imprimir, 150);
 }
 
-// ============================================================
-//  GARANTE OS CAMPOS/COLUNAS DE LOCAL (mesmo se o index.html for antigo)
-// ============================================================
-function garantirCamposLocal() {
-  const TH = 'px-4 py-3 font-bold text-slate-500 uppercase text-[10px]';
-  const LBL = 'block text-[10px] font-bold text-slate-500 mb-1';
-  const INP = 'w-full px-3 py-2 text-sm border rounded bg-slate-50';
-  // campo na tela de leitura (OCR)
-  if (!document.getElementById('ocrLocal')) {
-    const ref = document.getElementById('ocrValor'), bloco = ref && ref.closest('.grid');
-    if (bloco && bloco.parentNode) {
-      const d = document.createElement('div');
-      d.innerHTML = `<label class="${LBL}">LOCAL (CIDADE - UF) <span class="text-emerald-600">(auto)</span></label><input type="text" id="ocrLocal" placeholder="Ex: Santa Inês - MA" class="${INP}">`;
-      bloco.parentNode.insertBefore(d, bloco);
-    }
-  }
-  // campo na tela de edição
-  if (!document.getElementById('editLocal')) {
-    const ref = document.getElementById('editValor'), bloco = ref && ref.closest('.grid');
-    if (bloco && bloco.parentNode) {
-      const d = document.createElement('div');
-      d.innerHTML = `<label class="${LBL}">LOCAL (CIDADE - UF)</label><input type="text" id="editLocal" placeholder="Ex: Santa Inês - MA" class="${INP}">`;
-      bloco.parentNode.insertBefore(d, bloco);
-    }
-  }
-  // coluna "Local" na carteira
-  const tbC = document.getElementById('tbCarteira');
-  const trC = tbC && tbC.closest('table') && tbC.closest('table').querySelector('thead tr');
-  if (trC && trC.children.length === 6) { const th = document.createElement('th'); th.className = TH; th.textContent = 'Local'; trC.insertBefore(th, trC.children[2]); }
-  // coluna "Local" no detalhe da viagem
-  const tbV = document.getElementById('tbItensViagem');
-  const tabV = tbV && tbV.closest('table');
-  const trV = tabV && tabV.querySelector('thead tr');
-  if (trV && trV.children.length === 6) {
-    const th = document.createElement('th'); th.className = TH; th.textContent = 'Local'; trV.insertBefore(th, trV.children[2]);
-    const tdTotal = tabV.querySelector('tfoot td[colspan]'); if (tdTotal) tdTotal.setAttribute('colspan', '4');
-  }
-}
-garantirCamposLocal();
-
 // ==================== SESSÃO ====================
 window.onload = () => {
   const savedUser = localStorage.getItem('usuarioDespesasAtivo');
