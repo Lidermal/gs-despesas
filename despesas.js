@@ -3,6 +3,8 @@ const TEMPO_SESSAO_MS = 4 * 60 * 60 * 1000;
 
 let userData = null, viagensGlobais = [], carteiraGlobais = [], viagemAtual = null, filtroLojaSelecionada = "TODAS";
 let ocrImagemBase64 = '', ocrMimeType = 'image/jpeg', ocrTextoExtraido = '';
+let visualizadorIdAtual = null;
+const cacheImagens = {};
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 function escaparAtributoHtml(valor) { return String(valor || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
@@ -19,9 +21,10 @@ function isDataBaseSheets(valor) {
 }
 
 function formatarHoraVisao(valor) {
-  if (!valor || isDataBaseSheets(valor)) return '';
+  if (!valor) return '';
   const s = String(valor).trim();
   if (/^\d{1,2}:\d{2}$/.test(s)) return s;
+  if (isDataBaseSheets(valor)) return '';
   const m = s.match(/T(\d{2}):(\d{2})/);
   return m ? `${m[1]}:${m[2]}` : '';
 }
@@ -32,114 +35,194 @@ function chaveDataOrdenacao(valor) {
   const d = new Date(s); return isNaN(d.getTime()) ? new Date(0) : d;
 }
 
-// ==================== OCR: DATA / HORA / VALOR (MELHORADO) ====================
+// ============================================================
+//  OCR: PRÉ-PROCESSAMENTO DA IMAGEM
+// ============================================================
+// Converte para cinza, amplia e aumenta contraste: melhora MUITO a leitura
+// de cupom térmico, picote de maquininha e recibo manual.
+async function prepararImagemParaOCR(file) {
+  const original = await lerFileComoDataUrl(file);
+  const img = await new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = reject; i.src = original; });
+  const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
+  const maior = Math.max(w0, h0);
+  // alvo: lado maior entre 1800 e 2600px
+  let escala = 1;
+  if (maior < 1800) escala = 1800 / maior;
+  else if (maior > 2600) escala = 2600 / maior;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(w0 * escala); canvas.height = Math.round(h0 * escala);
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = imgData.data;
+  const hist = new Array(256).fill(0);
+  for (let i = 0; i < d.length; i += 4) {
+    const g = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+    d[i] = d[i + 1] = d[i + 2] = g; hist[g]++;
+  }
+  // estica o contraste usando percentis 2% e 98%
+  const total = canvas.width * canvas.height;
+  let acc = 0, lo = 0, hi = 255;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= total * 0.02) { lo = v; break; } }
+  acc = 0;
+  for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc >= total * 0.02) { hi = v; break; } }
+  const faixa = Math.max(1, hi - lo);
+  for (let i = 0; i < d.length; i += 4) {
+    let g = (d[i] - lo) * 255 / faixa;
+    g = g < 0 ? 0 : g > 255 ? 255 : g;
+    d[i] = d[i + 1] = d[i + 2] = g;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return canvas;
+}
+
+let tesseractWorker = null;
+async function obterWorkerOCR() {
+  if (tesseractWorker) return tesseractWorker;
+  const worker = await Tesseract.createWorker('por');
+  try { await worker.setParameters({ tessedit_pageseg_mode: '6', preserve_interword_spaces: '1' }); } catch (e) {}
+  tesseractWorker = worker;
+  return worker;
+}
+
+async function lerTextoDaImagem(file) {
+  let textoMelhorado = '';
+  try {
+    const worker = await obterWorkerOCR();
+    const canvas = await prepararImagemParaOCR(file);
+    const res = await worker.recognize(canvas);
+    textoMelhorado = res.data.text || '';
+  } catch (e) { console.warn('OCR pré-processado falhou', e); }
+  // se não achou valor, tenta com a imagem original
+  if (!extrairValorDoTexto(textoMelhorado)) {
+    try {
+      const res2 = await Tesseract.recognize(file, 'por');
+      const t2 = res2.data.text || '';
+      if (extrairValorDoTexto(t2)) return t2;
+      if (!textoMelhorado) return t2;
+    } catch (e) {}
+  }
+  return textoMelhorado;
+}
+
+// ============================================================
+//  OCR: DATA / HORA / VALOR
+// ============================================================
+const MESES_PT = { 'JANEIRO': '01', 'FEVEREIRO': '02', 'MARCO': '03', 'MARÇO': '03', 'ABRIL': '04', 'MAIO': '05', 'JUNHO': '06', 'JULHO': '07', 'AGOSTO': '08', 'SETEMBRO': '09', 'OUTUBRO': '10', 'NOVEMBRO': '11', 'DEZEMBRO': '12' };
+
+function dataValida_(dia, mes, ano) {
+  dia = parseInt(dia, 10); mes = parseInt(mes, 10); ano = parseInt(ano, 10);
+  if (!(dia >= 1 && dia <= 31 && mes >= 1 && mes <= 12 && ano >= 2015 && ano <= 2100)) return false;
+  const dt = new Date(ano, mes - 1, dia);
+  if (dt.getMonth() !== mes - 1) return false;
+  const amanha = new Date(); amanha.setDate(amanha.getDate() + 1);
+  return dt <= amanha; // comprovante não pode ser do futuro
+}
+
 function extrairDataDoTexto(texto) {
   if (!texto) return '';
-  let t = String(texto).toUpperCase();
-  const padroesData = [
-    /(\d{2})[\/\-\.](\d{2})[\/\-\.](\d{4})/g,
-    /(\d{2})[\/\-\.](\d{2})[\/\-\.](\d{2})/g,
-    /DATA[:\s]+(\d{2}[\/\-\.]\d{2}[\/\-\.]\d{2,4})/gi,
-    /(\d{2}) DE (JANEIRO|FEVEREIRO|MARÇO|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO) DE (\d{4})/gi
-  ];
-  const meses = { 'JANEIRO': '01', 'FEVEREIRO': '02', 'MARÇO': '03', 'ABRIL': '04', 'MAIO': '05', 'JUNHO': '06', 'JULHO': '07', 'AGOSTO': '08', 'SETEMBRO': '09', 'OUTUBRO': '10', 'NOVEMBRO': '11', 'DEZEMBRO': '12' };
-  for (let padrao of padroesData) {
-    padrao.lastIndex = 0;
-    let match;
-    while ((match = padrao.exec(t)) !== null) {
-      let dia, mes, ano;
-      if (match[0].includes(' DE ')) { dia = pad2(parseInt(match[1])); mes = meses[match[2].toUpperCase()]; ano = match[3]; }
-      else { dia = match[1]; mes = match[2]; ano = match[3].length === 2 ? '20' + match[3] : match[3]; }
-      if (parseInt(dia) >= 1 && parseInt(dia) <= 31 && parseInt(mes) >= 1 && parseInt(mes) <= 12 && parseInt(ano) >= 2000 && parseInt(ano) <= 2100) return `${dia}/${mes}/${ano}`;
+  const linhas = String(texto).toUpperCase().split(/\r?\n/);
+  const candidatos = [];
+  linhas.forEach((linha, idx) => {
+    const l = linha.replace(/O/g, (m, off, s) => /\d/.test(s[off - 1] || '') || /\d/.test(s[off + 1] || '') ? '0' : m);
+    const prefer = /DATA|EMISS|VENDA|TRANSA|COMPRA/.test(linha) ? 1 : 0;
+    let m;
+    const r1 = /(\d{1,2})\s?[\/\-\.]\s?(\d{1,2})\s?[\/\-\.]\s?(\d{4}|\d{2})(?!\d)/g;
+    while ((m = r1.exec(l)) !== null) {
+      const ano = m[3].length === 2 ? '20' + m[3] : m[3];
+      if (dataValida_(m[1], m[2], ano)) candidatos.push({ v: `${pad2(m[1])}/${pad2(m[2])}/${ano}`, p: prefer, i: idx });
     }
-  }
-  return '';
+    const r2 = /(\d{4})-(\d{2})-(\d{2})/g;
+    while ((m = r2.exec(l)) !== null) {
+      if (dataValida_(m[3], m[2], m[1])) candidatos.push({ v: `${m[3]}/${m[2]}/${m[1]}`, p: prefer, i: idx });
+    }
+    const r3 = /(\d{1,2}) DE (JANEIRO|FEVEREIRO|MAR[CÇ]O|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO) DE (\d{4})/g;
+    while ((m = r3.exec(l)) !== null) {
+      const mes = MESES_PT[m[2]];
+      if (mes && dataValida_(m[1], mes, m[3])) candidatos.push({ v: `${pad2(m[1])}/${mes}/${m[3]}`, p: 1, i: idx });
+    }
+  });
+  if (!candidatos.length) return '';
+  candidatos.sort((a, b) => (b.p - a.p) || (a.i - b.i));
+  return candidatos[0].v;
 }
 
 function extrairHoraDoTexto(texto) {
   if (!texto) return '';
-  let t = String(texto);
-  const padroesHora = [/(\d{2})[:hH](\d{2})/, /HORA[:\s]+(\d{2}[:hH]\d{2})/gi, /(\d{1,2})[:hH](\d{2})[:hH](\d{2})/];
-  for (let padrao of padroesHora) {
-    padrao.lastIndex = 0;
-    let match = padrao.exec(t);
-    if (match) {
-      let hora = pad2(parseInt(match[1]));
-      let min = match[2];
-      if (parseInt(hora) >= 0 && parseInt(hora) <= 23 && parseInt(min) >= 0 && parseInt(min) <= 59) return `${hora}:${min}`;
-    }
-  }
-  return '';
+  const linhas = String(texto).toUpperCase().split(/\r?\n/);
+  const candidatos = [];
+  linhas.forEach((linha, idx) => {
+    const prefer = /HORA|HR|EMISS|TRANSA|VENDA/.test(linha) ? 1 : 0;
+    const re = /(?<!\d)([01]?\d|2[0-3])\s?[:hH]\s?([0-5]\d)(?:\s?[:hH]\s?[0-5]\d)?(?!\d)/g;
+    let m;
+    while ((m = re.exec(linha)) !== null) candidatos.push({ v: `${pad2(m[1])}:${m[2]}`, p: prefer, i: idx });
+  });
+  if (!candidatos.length) return '';
+  candidatos.sort((a, b) => (b.p - a.p) || (a.i - b.i));
+  return candidatos[0].v;
 }
 
+// Procura o valor PAGO: pontua cada valor monetário pela palavra-chave
+// da linha (e da linha anterior) e escolhe o melhor.
 function extrairValorDoTexto(texto) {
   if (!texto) return '';
   let t = String(texto).toUpperCase();
-  t = t.replace(/\s+/g, ' ');
-  t = t.replace(/(R\$|RS|\$)\s*(\d+)[\)\]\}]+/g, '$1 $2');
+  t = t.replace(/R\s?S(?=\s*\d)/g, 'R$');            // "RS 66,00" -> "R$ 66,00"
+  t = t.replace(/(\d)\s+([,.])\s*(\d{2})(?!\d)/g, '$1$2$3'); // "66 ,00" -> "66,00"
+  const linhas = t.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
-  // Estratégia 1: busca por palavras-chave fortes
-  const padroesValor = [
-    /VALOR\s*PAGO[:\s]*R?\$?\s*([\d.]+,\d{2})/gi,
-    /TOTAL\s*(?:DA\s*COMPRA|A\s*PAGAR|PAGO)?[:\s]*R?\$?\s*([\d.]+,\d{2})/gi,
-    /PAGO[:\s]*R?\$?\s*([\d.]+,\d{2})/gi,
-    /CREDITO\s*(?:A\s*VISTA|A\s*PRAZO)?[:\s]*[\w\s]*?R?\$?\s*([\d.]+,\d{2})/gi,
-    /DEBITO\s*(?:A\s*VISTA)?[:\s]*[\w\s]*?R?\$?\s*([\d.]+,\d{2})/gi,
-    /R\$\s*([\d.]+,\d{2})/g,
-    /([\d.]+,\d{2})\s*REAL/gi,
+  const fortes = [
+    ['VALOR PAGO', 12], ['TOTAL A PAGAR', 12], ['VALOR TOTAL', 11], ['TOTAL PAGO', 11], ['VALOR DA COMPRA', 10], ['VALOR COBRADO', 10],
+    ['TOTAL R$', 10], ['TOTAL', 8], ['A PAGAR', 8], ['PAGO', 7], ['VALOR', 6], ['CREDITO', 5], ['DEBITO', 5], ['CARTAO', 4], ['PIX', 5], ['DINHEIRO', 4], ['APROVAD', 4], ['VISTA', 3]
   ];
-  for (let padrao of padroesValor) {
-    padrao.lastIndex = 0;
-    let match = padrao.exec(t);
-    if (match) {
-      let valorStr = match[1].replace(/\./g, '').replace(',', '.');
-      let valor = parseFloat(valorStr);
-      if (valor > 0.50 && valor < 50000) return valor.toFixed(2);
+  const negativas = /TROCO|DESCONTO|IMPOSTO|TRIBUT|ICMS|ALIQ|CNPJ|CPF|FONE|TEL\b|PIS|COFINS|UNIT|QTD|ACRESC|GORJETA|TAXA DE SERV|NSU|AUT\b|CODIGO|COD\b|PROTOCOLO|CHAVE/;
+
+  function pontuarLinha(l) {
+    if (negativas.test(l)) return -20;
+    let melhor = 0;
+    const semSub = l.replace(/SUBTOTAL|SUB-TOTAL|SUB TOTAL/g, 'SUBT');
+    for (const [k, p] of fortes) if (semSub.indexOf(k) !== -1) melhor = Math.max(melhor, p);
+    if (/SUBT/.test(l)) melhor = Math.max(melhor, 2);
+    if (/R\$/.test(l)) melhor += 2;
+    return melhor;
+  }
+
+  const candidatos = [];
+  linhas.forEach((linha, idx) => {
+    const anterior = idx > 0 ? linhas[idx - 1] : '';
+    const pLinha = pontuarLinha(linha);
+    const pAnt = anterior && !/\d[,.]\d{2}/.test(anterior) ? Math.max(0, pontuarLinha(anterior) - 3) : 0;
+    const score = pLinha < 0 ? pLinha : Math.max(pLinha, pAnt);
+
+    const re = /(\d{1,3}(?:\.\d{3})+|\d+)[,.](\d{2})(?!\d)/g;
+    let m;
+    while ((m = re.exec(linha)) !== null) {
+      const antes = linha[m.index - 1] || '', depois = linha[m.index + m[0].length] || '';
+      if (/[\d,.\/:]/.test(antes)) continue;      // pedaço de outro número / data
+      if (/[\.\/:]/.test(depois) && /\d/.test(linha[m.index + m[0].length + 1] || '')) continue; // data 12.05.2025
+      const valor = parseFloat(m[1].replace(/\./g, '') + '.' + m[2]);
+      if (valor >= 0.5 && valor < 50000) candidatos.push({ valor, score });
     }
-  }
-
-  // Estratégia 2: busca R$ seguido de número SEM vírgula (ex: R$6600 → 66,00)
-  const reRealSemVirgula = /R\$\s*(\d{3,})/g;
-  let matchReal;
-  while ((matchReal = reRealSemVirgula.exec(t)) !== null) {
-    const numStr = matchReal[1];
-    if (numStr.length >= 3) {
-      const intPart = numStr.slice(0, -2);
-      const decPart = numStr.slice(-2);
-      const valor = parseFloat(intPart + '.' + decPart);
-      if (valor > 0.50 && valor < 50000) return valor.toFixed(2);
+    // "R$ 6600" (sem separador) => 66,00
+    const reSem = /R\$\s*(\d{3,6})(?![\d,.])/g;
+    while ((m = reSem.exec(linha)) !== null) {
+      const valor = parseFloat(m[1].slice(0, -2) + '.' + m[1].slice(-2));
+      if (valor >= 0.5 && valor < 50000) candidatos.push({ valor, score: Math.max(score, 1) });
     }
-  }
+  });
 
-  // Estratégia 3: busca palavras-chave próximas a qualquer número
-  const palavrasChave = ['TOTAL', 'PAGO', 'VALOR', 'CREDITO', 'DEBITO', 'PIX', 'DINHEIRO', 'TOMBAMENTO'];
-  for (let palavra of palavrasChave) {
-    let index = t.indexOf(palavra);
-    if (index !== -1) {
-      let trecho = t.substring(index, index + 80);
-      let matchValor = /R?\$?\s*([\d.]+,\d{2})/.exec(trecho);
-      if (matchValor) {
-        let valorStr = matchValor[1].replace(/\./g, '').replace(',', '.');
-        let valor = parseFloat(valorStr);
-        if (valor > 0.50 && valor < 50000) return valor.toFixed(2);
-      }
-    }
-  }
-
-  // Estratégia 4: maior valor com centavos no texto
-  let todosValores = t.match(/[\d.]+,\d{2}/g) || [];
-  let maiorValor = 0;
-  for (let valorStr of todosValores) {
-    let valorLimpo = valorStr.replace(/\./g, '').replace(',', '.');
-    let valor = parseFloat(valorLimpo);
-    if (valor > maiorValor && valor < 50000) maiorValor = valor;
-  }
-  if (maiorValor > 0) return maiorValor.toFixed(2);
-
-  return '';
+  if (!candidatos.length) return '';
+  const positivos = candidatos.filter(c => c.score > 0);
+  const base = positivos.length ? positivos : candidatos.filter(c => c.score >= 0);
+  const lista = base.length ? base : candidatos;
+  lista.sort((a, b) => (b.score - a.score) || (b.valor - a.valor));
+  return lista[0].valor.toFixed(2);
 }
 
-// ==================== DRIVE / COMPRUVANTE ====================
+// ============================================================
+//  DRIVE / IMAGEM DO COMPROVANTE
+// ============================================================
 function extrairFileIdDrive(url) {
   const s = String(url || '');
   const p1 = s.match(/\/file\/d\/([^\/?&#]+)/); if (p1) return p1[1];
@@ -173,13 +256,69 @@ async function converterFileParaBase64(file) {
     return canvas.toDataURL('image/jpeg', 0.85);
   } catch (e) { return original; }
 }
-function abrirComprovante(url) { if (!url) { showToast('Sem comprovante anexado.', 'warning'); return; } window.open(url, '_blank', 'noopener,noreferrer'); }
-function baixarComprovante(url) {
-  if (!url) { showToast('Sem comprovante para download.', 'warning'); return; }
-  const fileId = extrairFileIdDrive(url);
-  if (!fileId) { window.open(url, '_blank', 'noopener,noreferrer'); return; }
-  const link = document.createElement('a'); link.href = `https://drive.google.com/uc?export=download&id=${fileId}`;
-  link.target = '_blank'; link.rel = 'noopener noreferrer'; document.body.appendChild(link); link.click(); link.remove();
+
+// Busca a imagem no Drive (via Apps Script) e guarda em cache
+async function obterImagemComprovante(idComp) {
+  if (cacheImagens[idComp]) return cacheImagens[idComp];
+  const r = await fetchAPI({ action: 'getComprovanteImagem', idComprovante: idComp, login: userData.login, nivel: userData.nivel });
+  if (r && r.success) {
+    cacheImagens[idComp] = { dataUrl: `data:${r.mimeType};base64,${r.base64}`, nome: r.nome || (idComp + '.jpg') };
+    return cacheImagens[idComp];
+  }
+  showToast((r && r.message) || 'Não foi possível carregar a imagem.', 'error');
+  return null;
+}
+
+// Se a miniatura do Drive falhar, carrega pelo Apps Script
+function fallbackThumb(img) {
+  if (img.dataset.tentou) { img.style.display = 'none'; return; }
+  img.dataset.tentou = '1';
+  obterImagemComprovante(img.dataset.id).then(x => { if (x) img.src = x.dataUrl; else img.style.display = 'none'; });
+}
+
+function htmlMiniatura(c, tamanho = 'h-12 w-12') {
+  if (!c.urlComprovante) return '';
+  return `<img src="${montarUrlThumbnailDrive(c.urlComprovante)}" data-id="${c.idComprovante}" alt="Comprovante" loading="lazy" referrerpolicy="no-referrer" class="${tamanho} object-cover rounded border cursor-pointer bg-slate-100" onclick="abrirVisualizador('${c.idComprovante}')" onerror="fallbackThumb(this)">`;
+}
+
+// ----- Visualizador (ver / baixar / imprimir) -----
+async function abrirVisualizador(idComp) {
+  visualizadorIdAtual = idComp;
+  const modal = document.getElementById('modalVisualizador');
+  const img = document.getElementById('visualizadorImg');
+  const loader = document.getElementById('visualizadorLoader');
+  modal.classList.remove('hidden'); img.classList.add('hidden'); img.src = ''; loader.classList.remove('hidden');
+  const x = await obterImagemComprovante(idComp);
+  loader.classList.add('hidden');
+  if (!x) { modal.classList.add('hidden'); return; }
+  img.src = x.dataUrl; img.classList.remove('hidden');
+}
+function fecharVisualizador() { document.getElementById('modalVisualizador').classList.add('hidden'); document.getElementById('visualizadorImg').src = ''; visualizadorIdAtual = null; }
+
+async function baixarComprovante(idComp) {
+  const id = idComp || visualizadorIdAtual;
+  const x = await obterImagemComprovante(id);
+  if (!x) return;
+  const a = document.createElement('a');
+  a.href = x.dataUrl; a.download = x.nome;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+// Imprime SOMENTE a imagem (iframe oculto, sem popup)
+async function imprimirComprovante(idComp) {
+  const id = idComp || visualizadorIdAtual;
+  const x = await obterImagemComprovante(id);
+  if (!x) return;
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+  document.body.appendChild(iframe);
+  const doc = iframe.contentWindow.document;
+  doc.open();
+  doc.write(`<!DOCTYPE html><html><head><title>Comprovante</title><style>@page{margin:10mm}html,body{margin:0;padding:0}img{display:block;max-width:100%;max-height:270mm;margin:0 auto}</style></head><body><img id="im" src="${x.dataUrl}"></body></html>`);
+  doc.close();
+  const imprimir = () => { try { iframe.contentWindow.focus(); iframe.contentWindow.print(); } catch (e) { showToast('Não foi possível imprimir.', 'error'); } setTimeout(() => iframe.remove(), 2000); };
+  const im = doc.getElementById('im');
+  if (im.complete) setTimeout(imprimir, 150); else im.onload = () => setTimeout(imprimir, 150);
 }
 
 // ==================== SESSÃO ====================
@@ -208,7 +347,7 @@ function showToast(message, type = 'info', title = null, duration = 4000) {
   setTimeout(fechar, duration);
 }
 
-// ==================== MODAL CONFIRMAÇÃO (COM ESTILOS INLINE) ====================
+// ==================== MODAL CONFIRMAÇÃO ====================
 function showConfirm(message, options = {}) {
   return new Promise((resolve) => {
     const existing = document.querySelector('.modal-overlay'); if (existing) existing.remove();
@@ -334,16 +473,17 @@ async function carregarCarteiraSuporte() {
       const diasVenc = 30 - Math.floor((new Date() - new Date(c.dataUpload)) / (1000 * 60 * 60 * 24));
       const temFoto = !!c.urlComprovante;
       const horaFormatada = formatarHoraVisao(c.horaDespesa);
+      const valorNum = Number(String(c.valor || 0).replace(',', '.')) || 0;
       tb.innerHTML += `
         <tr class="hover:bg-slate-50 border-b">
-          <td class="px-4 py-3 text-xs font-mono">${formatarDataVisao(c.dataDespesa)}${horaFormatada ? ' às ' + horaFormatada : ''}</td>
+          <td class="px-4 py-3 text-xs font-mono"><div class="flex items-center gap-3">${htmlMiniatura(c)}<span>${formatarDataVisao(c.dataDespesa)}${horaFormatada ? ' às ' + horaFormatada : ''}</span></div></td>
           <td class="px-4 py-3 text-xs font-bold text-slate-700">${c.categoria || ''}</td>
           <td class="px-4 py-3 text-xs font-bold uppercase text-slate-500">${c.lojaDebito || ''}</td>
-          <td class="px-4 py-3 text-xs font-bold text-emerald-600">R$ ${Number(c.valor || 0).toFixed(2).replace('.', ',')}</td>
+          <td class="px-4 py-3 text-xs font-bold text-emerald-600">R$ ${valorNum.toFixed(2).replace('.', ',')}</td>
           <td class="px-4 py-3 text-xs text-center"><div class="flex flex-col items-center gap-1"><span class="text-amber-600 font-bold">${diasVenc} dia(s)</span>${temFoto ? '<span class="text-emerald-600 font-bold text-[10px]"><i class="fa-solid fa-image"></i> Foto ok</span>' : '<span class="text-slate-400 text-[10px]">Sem foto</span>'}</div></td>
           <td class="px-4 py-3 text-xs text-center">
-            <div class="flex gap-1 justify-center">
-              ${temFoto ? `<button onclick="visualizarImagemCarteira('${c.idComprovante}')" class="text-blue-600 hover:text-blue-800" title="Ver foto"><i class="fa-solid fa-eye"></i></button>` : ''}
+            <div class="flex gap-2 justify-center">
+              ${temFoto ? `<button onclick="abrirVisualizador('${c.idComprovante}')" class="text-blue-600 hover:text-blue-800" title="Ver foto"><i class="fa-solid fa-eye"></i></button>` : ''}
               <button onclick="editarComprovanteCarteira('${c.idComprovante}')" class="text-amber-600 hover:text-amber-800" title="Editar"><i class="fa-solid fa-pen"></i></button>
               <button onclick="excluirComprovanteCarteira('${c.idComprovante}')" class="text-red-600 hover:text-red-800" title="Excluir"><i class="fa-solid fa-trash"></i></button>
             </div>
@@ -353,22 +493,20 @@ async function carregarCarteiraSuporte() {
   }
 }
 
-function visualizarImagemCarteira(idComp) {
-  const item = carteiraGlobais.find(c => c.idComprovante === idComp);
-  if (!item || !item.urlComprovante) { showToast('Sem imagem.', 'warning'); return; }
-  abrirComprovante(item.urlComprovante);
-}
-
 function editarComprovanteCarteira(idComp) {
   const item = carteiraGlobais.find(c => c.idComprovante === idComp);
   if (!item) return;
   document.getElementById('editIdComprovante').value = idComp;
-  document.getElementById('editData').value = item.dataDespesa || '';
+  document.getElementById('editData').value = formatarDataVisao(item.dataDespesa) || '';
   document.getElementById('editHora').value = formatarHoraVisao(item.horaDespesa) || '';
-  document.getElementById('editValor').value = Number(item.valor || 0).toFixed(2).replace('.', ',');
+  // input type=number exige PONTO decimal (com vírgula o campo fica vazio)
+  document.getElementById('editValor').value = (Number(String(item.valor || 0).replace(',', '.')) || 0).toFixed(2);
   document.getElementById('editLoja').value = item.lojaDebito || '';
   document.getElementById('editCategoria').value = item.categoria || '';
-  document.getElementById('editPreviewImg').src = item.urlComprovante ? montarUrlThumbnailDrive(item.urlComprovante) : '';
+  const img = document.getElementById('editPreviewImg');
+  img.dataset.tentou = ''; img.dataset.id = idComp; img.style.display = '';
+  img.referrerPolicy = 'no-referrer'; img.onerror = () => fallbackThumb(img);
+  img.src = item.urlComprovante ? montarUrlThumbnailDrive(item.urlComprovante) : '';
   document.getElementById('editPreviewContainer').classList.toggle('hidden', !item.urlComprovante);
   document.getElementById('editFileOCR').value = '';
   document.getElementById('modalEditarComprovante').classList.remove('hidden');
@@ -393,14 +531,14 @@ async function salvarEdicaoComprovante() {
   if (novaImagem) { data.imagemBase64 = novaImagem; data.mimeType = novoMime; }
 
   const r = await fetchAPI(data, 'btnSalvarEdicao');
-  if (r && r.success) { document.getElementById('modalEditarComprovante').classList.add('hidden'); showToast('Comprovante atualizado!', 'success'); carregarCarteiraSuporte(); }
+  if (r && r.success) { delete cacheImagens[idComp]; document.getElementById('modalEditarComprovante').classList.add('hidden'); showToast('Comprovante atualizado!', 'success'); carregarCarteiraSuporte(); }
   else { showToast(r.message || 'Erro ao atualizar.', 'error'); }
 }
 
 async function excluirComprovanteCarteira(idComp) {
   if (!await showConfirm("Excluir este comprovante permanentemente?", { type: 'danger', icon: 'fa-trash' })) return;
   const r = await fetchAPI({ action: 'deleteComprovante', idComprovante: idComp, login: userData.login });
-  if (r && r.success) { showToast('Comprovante excluído.', 'success'); carregarCarteiraSuporte(); }
+  if (r && r.success) { delete cacheImagens[idComp]; showToast('Comprovante excluído.', 'success'); carregarCarteiraSuporte(); }
   else { showToast(r.message || 'Erro ao excluir.', 'error'); }
 }
 
@@ -427,8 +565,7 @@ async function processarOCR(event) {
     ocrMimeType = matchMime ? matchMime[1] : (file.type || 'image/jpeg');
     if (preview && previewContainer) { preview.src = ocrImagemBase64; previewContainer.classList.remove('hidden'); }
     try {
-      const res = await Tesseract.recognize(file, 'por');
-      ocrTextoExtraido = res.data.text || '';
+      ocrTextoExtraido = await lerTextoDaImagem(file);
       document.getElementById('ocrData').value = extrairDataDoTexto(ocrTextoExtraido);
       document.getElementById('ocrHora').value = extrairHoraDoTexto(ocrTextoExtraido);
       document.getElementById('ocrValor').value = extrairValorDoTexto(ocrTextoExtraido);
@@ -436,8 +573,8 @@ async function processarOCR(event) {
       if (!document.getElementById('ocrData').value) faltantes.push('data');
       if (!document.getElementById('ocrHora').value) faltantes.push('hora');
       if (!document.getElementById('ocrValor').value) faltantes.push('valor');
-      if (faltantes.length > 0) showToast(`Verifique: ${faltantes.join(', ')}.`, 'warning');
-      else showToast('Dados lidos! Preencha Categoria e Loja.', 'success');
+      if (faltantes.length > 0) showToast(`Não consegui ler: ${faltantes.join(', ')}. Preencha manualmente.`, 'warning');
+      else showToast('Dados lidos! Confira o valor e preencha Categoria e Loja.', 'success');
     } catch (e) { showToast('Falha no OCR. Preencha manualmente.', 'warning'); }
   } catch (e) { ocrImagemBase64 = ''; showToast('Erro ao carregar imagem.', 'error'); }
   finally { document.getElementById('ocrLoader').classList.add('hidden'); document.getElementById('ocrForm').classList.remove('hidden'); document.getElementById('btnSalvarNota').classList.remove('hidden'); }
@@ -451,16 +588,16 @@ async function salvarNotaNaCarteira() {
   if (!valorRaw) { showToast('Informe o valor.', 'warning'); return; }
   if (!loja) { showToast('Informe a loja.', 'warning'); return; }
   if (!categoria) { showToast('Selecione a categoria.', 'warning'); return; }
-  
+
   let dataDespesa = document.getElementById('ocrData').value.trim();
   if (!dataDespesa) dataDespesa = new Date().toLocaleDateString('pt-BR');
-  
+
   const data = { action: 'saveComprovante', login: userData.login, dataDespesa, horaDespesa: document.getElementById('ocrHora').value.trim(), valor: parseFloat(String(valorRaw).replace(',', '.')), lojaDebito: loja, categoria, ocrConteudo: String(ocrTextoExtraido || '').slice(0, 5000), imagemBase64: ocrImagemBase64, mimeType: ocrMimeType };
   const r = await fetchAPI(data, 'btnSalvarNota');
   if (r && r.success) {
     document.getElementById('modalOCR').classList.add('hidden');
-    if (r.urlComprovante) showToast('✅ Comprovante e FOTO salvos!', 'success');
-    else showToast('Salvo, mas sem anexo no Drive.', 'warning');
+    if (r.urlComprovante) showToast('Comprovante e foto salvos no Drive!', 'success');
+    else showToast('Salvo, mas a foto não foi para o Drive. Verifique as permissões do Apps Script.', 'warning');
     ocrImagemBase64 = ''; ocrMimeType = 'image/jpeg'; ocrTextoExtraido = '';
     carregarCarteiraSuporte();
   } else { showToast(r.message || 'Falha ao salvar.', 'error'); }
@@ -509,18 +646,21 @@ function renderItensViagem() {
   if (viagemAtual.itens.length === 0) { tb.innerHTML = '<tr><td colspan="6" class="p-6 text-center text-slate-400">Nenhum ticket anexado.</td></tr>'; document.getElementById('detalheTotalValor').textContent = 'R$ 0,00'; return; }
   viagemAtual.itens.sort((a, b) => chaveDataOrdenacao(a.dataDespesa) - chaveDataOrdenacao(b.dataDespesa));
   viagemAtual.itens.forEach(item => {
-    total += Number(item.valor || 0);
+    const valorNum = Number(String(item.valor || 0).replace(',', '.')) || 0;
+    total += valorNum;
     let btnAcao = '';
     if (isColab && emEdicao) btnAcao = `<button onclick="removerItemViagem('${item.idComprovante}')" class="text-red-500 hover:text-red-700" title="Remover"><i class="fa-solid fa-trash"></i></button>`;
     let celulaComprovante = '<td class="px-4 py-3 text-xs text-center text-slate-300">—</td>';
     if (podeVerComprovante) {
       if (item.urlComprovante) {
-        const thumb = montarUrlThumbnailDrive(item.urlComprovante);
-        const urlHtml = escaparAtributoHtml(item.urlComprovante);
-        celulaComprovante = `<td class="px-4 py-3 text-xs"><div class="flex items-center gap-3"><img src="${thumb}" alt="Comprovante" loading="lazy" class="h-12 w-12 object-cover rounded border cursor-pointer bg-slate-100" data-url="${urlHtml}" onclick="abrirComprovante(this.dataset.url)" onerror="this.style.display='none'"><div class="flex flex-col gap-1"><button type="button" class="text-[10px] font-bold text-blue-600 hover:text-blue-800" data-url="${urlHtml}" onclick="abrirComprovante(this.dataset.url)"><i class="fa-solid fa-eye mr-1"></i> Ver</button><button type="button" class="text-[10px] font-bold text-emerald-600 hover:text-emerald-800" data-url="${urlHtml}" onclick="baixarComprovante(this.dataset.url)"><i class="fa-solid fa-download mr-1"></i> Baixar</button></div></div></td>`;
+        celulaComprovante = `<td class="px-4 py-3 text-xs"><div class="flex items-center gap-3">${htmlMiniatura(item)}<div class="flex flex-col gap-1">
+          <button type="button" class="text-[10px] font-bold text-blue-600 hover:text-blue-800 text-left" onclick="abrirVisualizador('${item.idComprovante}')"><i class="fa-solid fa-eye mr-1"></i> Ver</button>
+          <button type="button" class="text-[10px] font-bold text-emerald-600 hover:text-emerald-800 text-left" onclick="baixarComprovante('${item.idComprovante}')"><i class="fa-solid fa-download mr-1"></i> Baixar</button>
+          <button type="button" class="text-[10px] font-bold text-slate-600 hover:text-slate-800 text-left" onclick="imprimirComprovante('${item.idComprovante}')"><i class="fa-solid fa-print mr-1"></i> Imprimir</button>
+        </div></div></td>`;
       } else { celulaComprovante = '<td class="px-4 py-3 text-xs text-center text-amber-600 font-bold">Sem imagem</td>'; }
     }
-    tb.innerHTML += `<tr class="hover:bg-slate-50 border-b"><td class="px-4 py-3 text-xs">${formatarDataVisao(item.dataDespesa)}</td><td class="px-4 py-3 text-xs font-bold text-slate-700">${item.categoria || ''}</td><td class="px-4 py-3 text-xs uppercase font-bold text-slate-500">${item.lojaDebito || ''}</td><td class="px-4 py-3 text-xs text-right font-bold text-emerald-600">R$ ${Number(item.valor || 0).toFixed(2).replace('.', ',')}</td>${celulaComprovante}<td class="px-4 py-3 text-xs text-center">${btnAcao}</td></tr>`;
+    tb.innerHTML += `<tr class="hover:bg-slate-50 border-b"><td class="px-4 py-3 text-xs">${formatarDataVisao(item.dataDespesa)}</td><td class="px-4 py-3 text-xs font-bold text-slate-700">${item.categoria || ''}</td><td class="px-4 py-3 text-xs uppercase font-bold text-slate-500">${item.lojaDebito || ''}</td><td class="px-4 py-3 text-xs text-right font-bold text-emerald-600">R$ ${valorNum.toFixed(2).replace('.', ',')}</td>${celulaComprovante}<td class="px-4 py-3 text-xs text-center">${btnAcao}</td></tr>`;
   });
   document.getElementById('detalheTotalValor').textContent = `R$ ${total.toFixed(2).replace('.', ',')}`;
 }
@@ -531,7 +671,8 @@ async function abrirModalAnexarTickets() {
   if (r && r.success && r.comprovantes.length > 0) {
     r.comprovantes.forEach(c => {
       const temFoto = !!c.urlComprovante;
-      div.innerHTML += `<label class="flex items-center gap-3 p-2 bg-white rounded border cursor-pointer hover:border-blue-400"><input type="checkbox" value="${c.idComprovante}" class="chk-ticket h-4 w-4 accent-blue-600"><div class="text-xs"><span class="font-bold text-slate-800">${c.categoria || ''}</span> (${formatarDataVisao(c.dataDespesa)})<span class="block text-[10px] text-slate-500">Debitar: <b>${c.lojaDebito || ''}</b> | R$ ${Number(c.valor || 0).toFixed(2).replace('.', ',')} ${temFoto ? '| <span class="text-emerald-600 font-bold">Foto ok</span>' : '| <span class="text-amber-600 font-bold">Sem foto</span>'}</span></div></label>`;
+      const valorNum = Number(String(c.valor || 0).replace(',', '.')) || 0;
+      div.innerHTML += `<label class="flex items-center gap-3 p-2 bg-white rounded border cursor-pointer hover:border-blue-400"><input type="checkbox" value="${c.idComprovante}" class="chk-ticket h-4 w-4 accent-blue-600"><div class="text-xs"><span class="font-bold text-slate-800">${c.categoria || ''}</span> (${formatarDataVisao(c.dataDespesa)})<span class="block text-[10px] text-slate-500">Debitar: <b>${c.lojaDebito || ''}</b> | R$ ${valorNum.toFixed(2).replace('.', ',')} ${temFoto ? '| <span class="text-emerald-600 font-bold">Foto ok</span>' : '| <span class="text-amber-600 font-bold">Sem foto</span>'}</span></div></label>`;
     });
     document.getElementById('modalAnexarTickets').classList.remove('hidden');
   } else { showToast('Carteira vazia.', 'info'); }
