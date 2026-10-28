@@ -249,7 +249,26 @@
             </div>
         </div>
     </div>
+<!-- COLE ESTE BLOCO NO index.html, logo ANTES da linha:  <script src="despesas.js"></script> -->
 
+<!-- MODAL VISUALIZADOR DE COMPROVANTE (ver / baixar / imprimir) -->
+    <div id="modalVisualizador" class="hidden fixed inset-0 bg-black bg-opacity-70 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) fecharVisualizador()">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[95vh] flex flex-col overflow-hidden">
+            <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 bg-slate-900 text-white">
+                <h3 class="font-bold text-sm"><i class="fa-solid fa-receipt text-emerald-400 mr-2"></i> Comprovante</h3>
+                <div class="flex gap-2">
+                    <button onclick="baixarComprovante()" class="px-3 py-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 rounded"><i class="fa-solid fa-download mr-1"></i> Baixar</button>
+                    <button onclick="imprimirComprovante()" class="px-3 py-1.5 text-xs font-bold bg-blue-600 hover:bg-blue-700 rounded"><i class="fa-solid fa-print mr-1"></i> Imprimir</button>
+                    <button onclick="fecharVisualizador()" class="px-3 py-1.5 text-xs font-bold bg-slate-700 hover:bg-slate-600 rounded"><i class="fa-solid fa-xmark mr-1"></i> Fechar</button>
+                </div>
+            </div>
+            <div class="flex-1 overflow-auto bg-slate-100 p-4 text-center">
+                <div id="visualizadorLoader" class="hidden py-16 text-emerald-600 font-bold text-sm"><i class="fa-solid fa-spinner fa-spin text-2xl block mb-2"></i> Carregando imagem...</div>
+                <img id="visualizadorImg" class="hidden mx-auto max-w-full rounded shadow" alt="Comprovante">
+            </div>
+        </div>
+    </div>
+    
     <script src="despesas.js"></script>
 </body>
 </html>
