@@ -622,9 +622,11 @@ function renderAcoesViagem() {
   const area = document.getElementById('painelAcoesViagem'); area.innerHTML = '';
   const isGestao = (userData.nivel === 'Coordenação GS' || userData.nivel === 'Gerência GS');
   const isColab = (String(viagemAtual.colaborador).toLowerCase() === String(userData.login).toLowerCase());
+  let direita = '';
+
   if (isColab && (viagemAtual.status === 'ABERTO' || viagemAtual.status === 'SOLICITAR CORRECAO')) {
     area.innerHTML += `<button onclick="abrirModalAnexarTickets()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-paperclip mr-2"></i> Inserir Tickets</button>`;
-    if (viagemAtual.itens.length > 0) area.innerHTML += `<button onclick="enviarDespesasViagem()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-4 rounded shadow ml-auto"><i class="fa-solid fa-paper-plane mr-2"></i> Enviar Despesas</button>`;
+    if (viagemAtual.itens.length > 0) direita += `<button onclick="enviarDespesasViagem()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-paper-plane mr-2"></i> Enviar Despesas</button>`;
   }
   if (isGestao) {
     if (viagemAtual.status === 'PENDENTE') {
@@ -632,8 +634,16 @@ function renderAcoesViagem() {
       area.innerHTML += `<button onclick="alterarStatusViagem('SOLICITAR CORRECAO')" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-arrow-rotate-left mr-2"></i> Solicitar Correção</button>`;
     }
     if (viagemAtual.status === 'FECHADA') area.innerHTML += `<button onclick="alterarStatusViagem('ARQUIVADA')" class="bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-box-archive mr-2"></i> Arquivar</button>`;
-    area.innerHTML += `<button onclick="excluirViagem()" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2 px-4 rounded shadow ml-auto"><i class="fa-solid fa-trash mr-2"></i> Excluir</button>`;
   }
+
+  // Botão EXPORTAR (relatório sem fotos) - visível para gestão e técnico responsável
+  if (isGestao || isColab) {
+    direita += `<button onclick="exportarRelatorioViagem()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-file-export mr-2"></i> Exportar</button>`;
+  }
+  if (isGestao) {
+    direita += `<button onclick="excluirViagem()" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-trash mr-2"></i> Excluir</button>`;
+  }
+  if (direita) area.innerHTML += `<div class="flex flex-wrap gap-2 ml-auto">${direita}</div>`;
 }
 
 function renderItensViagem() {
@@ -663,6 +673,116 @@ function renderItensViagem() {
     tb.innerHTML += `<tr class="hover:bg-slate-50 border-b"><td class="px-4 py-3 text-xs">${formatarDataVisao(item.dataDespesa)}</td><td class="px-4 py-3 text-xs font-bold text-slate-700">${item.categoria || ''}</td><td class="px-4 py-3 text-xs uppercase font-bold text-slate-500">${item.lojaDebito || ''}</td><td class="px-4 py-3 text-xs text-right font-bold text-emerald-600">R$ ${valorNum.toFixed(2).replace('.', ',')}</td>${celulaComprovante}<td class="px-4 py-3 text-xs text-center">${btnAcao}</td></tr>`;
   });
   document.getElementById('detalheTotalValor').textContent = `R$ ${total.toFixed(2).replace('.', ',')}`;
+}
+
+// ============================================================
+//  RELATÓRIO / EXPORTAR (sem fotos, com logo da TI)
+// ============================================================
+function escaparTextoHtml(valor) {
+  return String(valor == null ? '' : valor).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function formatarMoedaBR(n) {
+  return 'R$ ' + (Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function exportarRelatorioViagem() {
+  if (!viagemAtual) return;
+  const itens = (viagemAtual.itens || []).slice().sort((a, b) => chaveDataOrdenacao(a.dataDespesa) - chaveDataOrdenacao(b.dataDespesa));
+  if (itens.length === 0) { showToast('Não há despesas para exportar.', 'warning'); return; }
+
+  let total = 0;
+  const porCategoria = {};
+  const linhas = itens.map((item, i) => {
+    const valor = Number(String(item.valor || 0).replace(',', '.')) || 0;
+    total += valor;
+    const cat = item.categoria || 'Sem categoria';
+    porCategoria[cat] = (porCategoria[cat] || 0) + valor;
+    const hora = formatarHoraVisao(item.horaDespesa);
+    return `<tr><td class="c">${i + 1}</td><td>${escaparTextoHtml(formatarDataVisao(item.dataDespesa))}</td><td class="c">${escaparTextoHtml(hora || '—')}</td><td>${escaparTextoHtml(cat)}</td><td class="c up">${escaparTextoHtml(item.lojaDebito || '')}</td><td class="r">${formatarMoedaBR(valor)}</td></tr>`;
+  }).join('');
+
+  const linhasResumo = Object.keys(porCategoria).sort().map(cat => `<tr><td>${escaparTextoHtml(cat)}</td><td class="r">${formatarMoedaBR(porCategoria[cat])}</td></tr>`).join('');
+
+  const agora = new Date();
+  const emitidoEm = `${agora.toLocaleDateString('pt-BR')} às ${pad2(agora.getHours())}:${pad2(agora.getMinutes())}`;
+  const emitidoPor = `${userData.nome || ''} ${userData.sobrenome || ''}`.trim() || userData.login;
+  const logoUrl = new URL('logo.png', window.location.href).href;
+  const nomeArquivo = `Relatorio_Despesas_${viagemAtual.sigla}_${agora.toISOString().slice(0, 10)}`;
+
+  const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>${escaparTextoHtml(nomeArquivo)}</title>
+<style>
+@page{size:A4;margin:12mm}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{font-family:Arial,Helvetica,sans-serif;color:#0f172a;font-size:12px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.topo{display:flex;align-items:center;justify-content:space-between;background:#0f172a;color:#fff;padding:14px 18px;border-radius:8px;border-bottom:4px solid #059669}
+.topo .marca{display:flex;align-items:center;gap:14px}
+.topo img{height:52px;background:#fff;border-radius:6px;padding:4px}
+.topo h1{margin:0;font-size:18px;letter-spacing:.5px}
+.topo p{margin:2px 0 0;font-size:11px;color:#34d399;font-weight:bold}
+.topo .emissao{text-align:right;font-size:10px;color:#cbd5e1;line-height:1.5}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:#334155;margin:20px 0 8px;padding-bottom:4px;border-bottom:2px solid #e2e8f0}
+.info{display:grid;grid-template-columns:1fr 1fr;gap:8px 20px;border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;background:#f8fafc}
+.info div span{display:block;font-size:9px;font-weight:bold;color:#64748b;text-transform:uppercase;letter-spacing:.6px}
+.info div b{font-size:13px}
+.info .full{grid-column:1 / -1}
+table{width:100%;border-collapse:collapse}
+th{background:#f1f5f9;color:#475569;font-size:9px;text-transform:uppercase;letter-spacing:.6px;text-align:left;padding:8px;border:1px solid #e2e8f0}
+td{padding:8px;border:1px solid #e2e8f0;font-size:11.5px}
+tr{page-break-inside:avoid}
+.c{text-align:center}.r{text-align:right}.up{text-transform:uppercase;font-weight:bold}
+tfoot td{background:#ecfdf5;font-weight:bold;font-size:13px;color:#047857}
+.resumo{width:55%}
+.assin{display:flex;gap:40px;margin-top:70px;page-break-inside:avoid}
+.assin div{flex:1;text-align:center;border-top:1px solid #334155;padding-top:6px;font-size:10px;color:#475569}
+.rodape{margin-top:30px;text-align:center;font-size:9px;color:#94a3b8}
+</style></head><body>
+<div class="topo">
+  <div class="marca"><img id="logoRel" src="${escaparTextoHtml(logoUrl)}" alt="TI Claudino"><div><h1>Relatório de Despesas de Viagem</h1><p>TI Claudino S/A</p></div></div>
+  <div class="emissao">Emitido em<br><b>${escaparTextoHtml(emitidoEm)}</b><br>por ${escaparTextoHtml(emitidoPor)}</div>
+</div>
+
+<h2>Dados da Viagem</h2>
+<div class="info">
+  <div><span>Loja (Sigla)</span><b>${escaparTextoHtml(viagemAtual.sigla)}</b></div>
+  <div><span>Status</span><b>${escaparTextoHtml(viagemAtual.status)}</b></div>
+  <div class="full"><span>Motivo</span><b>${escaparTextoHtml(viagemAtual.motivo)}</b></div>
+  <div><span>Solicitado por</span><b>${escaparTextoHtml(viagemAtual.criadoPor)}</b></div>
+  <div><span>Técnico responsável</span><b>${escaparTextoHtml(viagemAtual.colaborador)}</b></div>
+</div>
+
+<h2>Despesas (Ordem Cronológica)</h2>
+<table>
+  <thead><tr><th class="c" style="width:32px">#</th><th>Data</th><th class="c">Hora</th><th>Categoria</th><th class="c">Loja Débito</th><th class="r">Valor</th></tr></thead>
+  <tbody>${linhas}</tbody>
+  <tfoot><tr><td colspan="5" class="r">TOTAL (${itens.length} despesa${itens.length > 1 ? 's' : ''})</td><td class="r">${formatarMoedaBR(total)}</td></tr></tfoot>
+</table>
+
+<h2>Resumo por Categoria</h2>
+<table class="resumo"><thead><tr><th>Categoria</th><th class="r">Total</th></tr></thead><tbody>${linhasResumo}</tbody></table>
+
+<div class="assin"><div>Técnico responsável</div><div>Coordenação / Gerência</div></div>
+<div class="rodape">Relatório gerado pelo Sistema de Despesas de Viagens | TI Claudino S/A</div>
+</body></html>`;
+
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+  document.body.appendChild(iframe);
+  const doc = iframe.contentWindow.document;
+  doc.open(); doc.write(html); doc.close();
+
+  let impresso = false;
+  const imprimir = () => {
+    if (impresso) return; impresso = true;
+    try { iframe.contentWindow.focus(); iframe.contentWindow.print(); }
+    catch (e) { showToast('Não foi possível gerar o relatório.', 'error'); }
+    setTimeout(() => iframe.remove(), 3000);
+  };
+  // espera a logo carregar antes de abrir a impressão (com limite de 2,5s)
+  const logo = doc.getElementById('logoRel');
+  if (logo && !logo.complete) { logo.onload = () => setTimeout(imprimir, 150); logo.onerror = () => setTimeout(imprimir, 150); setTimeout(imprimir, 2500); }
+  else setTimeout(imprimir, 200);
+  showToast('Relatório pronto! Na janela de impressão escolha "Salvar como PDF".', 'info');
 }
 
 async function abrirModalAnexarTickets() {
