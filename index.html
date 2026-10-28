@@ -77,6 +77,8 @@
                 <div><h1 class="text-white font-bold text-base">Despesas de Viagens</h1><p class="text-[10px] text-emerald-400 font-semibold">TI Claudino S/A</p></div>
             </div>
             <div class="flex items-center gap-4">
+                <span class="hidden sm:flex items-center gap-1 text-[10px] font-bold text-emerald-400 uppercase" title="Os dados são atualizados automaticamente"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Ao vivo</span>
+                <button onclick="irParaViagens()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded transition" title="Abrir o sistema de Gestão de Viagens (horas)"><i class="fa-solid fa-clock mr-1"></i> Viagens</button>
                 <div class="text-right hidden md:block"><p class="text-sm font-medium text-white" id="navUserName"></p><p class="text-xs text-emerald-400 font-bold" id="navUserRole"></p></div>
                 <button onclick="logout()" class="text-slate-400 hover:text-red-400 font-semibold text-sm"><i class="fa-solid fa-power-off mr-1"></i> Sair</button>
             </div>
@@ -128,17 +130,37 @@
         </div>
     </div>
 
-    <!-- MODAL CRIAR VIAGEM -->
-    <div id="modalCriarViagem" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
-        <div class="bg-white p-6 rounded-xl shadow-xl w-96 border-t-4 border-emerald-600">
-            <h3 class="text-lg font-bold text-slate-800 mb-4"><i class="fa-solid fa-route text-emerald-600 mr-2"></i> Gerar Viagem</h3>
-            <div class="space-y-4">
+    <!-- MODAL CRIAR VIAGEM (vários técnicos) -->
+    <div id="modalCriarViagem" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-md border-t-4 border-emerald-600 max-h-[95vh] overflow-y-auto">
+            <h3 class="text-lg font-bold text-slate-800 mb-1"><i class="fa-solid fa-route text-emerald-600 mr-2"></i> Gerar Viagem</h3>
+            <p class="text-[11px] text-slate-500 mb-4">Cria a viagem de despesas <b>e</b> o projeto de horas (Viagens-GS) para cada técnico selecionado.</p>
+            <div class="space-y-3">
                 <div><label class="block text-[10px] font-bold text-slate-500 mb-1">SIGLA DA LOJA</label><input type="text" id="novaViagemSigla" maxlength="3" placeholder="Ex: PIN" class="w-full px-3 py-2 text-sm border rounded uppercase bg-slate-50"></div>
-                <div><label class="block text-[10px] font-bold text-slate-500 mb-1">MOTIVO</label><input type="text" id="novaViagemMotivo" placeholder="Ex: Troca de Servidor" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></div>
-                <div><label class="block text-[10px] font-bold text-slate-500 mb-1">TÉCNICO</label><select id="novaViagemColaborador" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></select></div>
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-500 mb-1">CATEGORIA DO SERVIÇO</label>
+                    <select id="novaViagemTipo" onchange="checkOutrosViagem()" class="w-full px-3 py-2 text-sm border rounded bg-slate-50 mb-2">
+                        <option value="Inauguração">Inauguração</option>
+                        <option value="Reinauguração">Reinauguração</option>
+                        <option value="Pc-á-pc">Pc-á-pc</option>
+                        <option value="Impressoras">Impressoras</option>
+                        <option value="Networking">Networking</option>
+                        <option value="Outros">Outros...</option>
+                    </select>
+                    <input type="text" id="novaViagemOutros" placeholder="Especifique a categoria..." class="hidden w-full px-3 py-2 text-sm border rounded bg-white">
+                </div>
+                <div><label class="block text-[10px] font-bold text-slate-500 mb-1">MOTIVO (opcional - padrão: categoria)</label><input type="text" id="novaViagemMotivo" placeholder="Ex: Troca de Servidor" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></div>
+                <div>
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="block text-[10px] font-bold text-slate-500">TÉCNICOS <span id="contTecnicos" class="text-emerald-600">(0 selecionados)</span></label>
+                        <button type="button" onclick="selecionarTodosTecnicos()" class="text-[10px] font-bold text-blue-600 hover:text-blue-800">Marcar / desmarcar visíveis</button>
+                    </div>
+                    <input type="text" id="buscaTecnico" oninput="renderListaTecnicos()" placeholder="Buscar técnico..." class="w-full px-3 py-2 text-sm border rounded bg-slate-50 mb-2">
+                    <div id="listaTecnicos" class="max-h-48 overflow-auto custom-scrollbar border rounded"></div>
+                </div>
             </div>
             <div class="flex justify-end gap-2 mt-6">
-                <button onclick="document.getElementById('modalCriarViagem').classList.add('hidden')" class="px-4 py-2 text-sm font-bold text-slate-500">Cancelar</button>
+                <button onclick="fecharModalCriarViagem()" class="px-4 py-2 text-sm font-bold text-slate-500">Cancelar</button>
                 <button onclick="confirmarCriarViagem()" id="btnCriarViagem" class="px-4 py-2 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded">Gerar</button>
             </div>
         </div>
@@ -233,6 +255,6 @@
         </div>
     </div>
 
-    <script src="despesas.js?v=viagem3"></script>
+    <script src="despesas.js?v=viagem4"></script>
 </body>
 </html>
