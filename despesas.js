@@ -3,12 +3,13 @@ const VIAGENS_URL = "https://viagens-gs.vercel.app/";
 const TEMPO_SESSAO_MS = 4 * 60 * 60 * 1000;
 const POLL_MS = 8000; // atualização automática
 
-let userData = null, viagensGlobais = [], viagemAtual = null, filtroLojaSelecionada = "TODAS";
-let ocrImagemBase64 = '', ocrMimeType = 'image/jpeg', ocrTextoExtraido = '';
+let userData = null, viagensGlobais = [], grupoAtualKey = null, filtroLojaSelecionada = "TODAS";
+let abaAtiva = 'ATIVAS', filtroStatus = 'TODOS';
+let ocrImagemBase64 = '', ocrMimeType = 'image/jpeg', ocrTextoExtraido = '', ocrIdViagem = null;
 let visualizadorIdAtual = null;
 const cacheImagens = {};
 let pollTimer = null, polling = false, pollPromise = null, jaCarregou = false, lastSig = '', busy = 0;
-let tecnicos = [], tecnicosSel = new Set();
+let tecnicos = [], tecnicosSel = new Set(), nomesUsuarios = {}, usuariosPromise = null;
 
 const $ = (id) => document.getElementById(id);
 const RX_GESTAO = /Coordena|Ger[eê]ncia/i;
@@ -16,6 +17,7 @@ function isGestaoUser() { return !!userData && RX_GESTAO.test(userData.nivel || 
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 function escaparAtributoHtml(valor) { return String(valor || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function lower(s) { return String(s == null ? '' : s).toLowerCase(); }
 
 // ===== LOGIN ÚNICO ENTRE SISTEMAS (recebe a sessão vinda do viagens-gs) =====
 (function consumirSSO() {
@@ -68,14 +70,11 @@ function chaveDataOrdenacao(valor) {
 // ============================================================
 //  OCR: PRÉ-PROCESSAMENTO DA IMAGEM
 // ============================================================
-// Converte para cinza, amplia e aumenta contraste: melhora MUITO a leitura
-// de cupom térmico, picote de maquininha e recibo manual.
 async function prepararImagemParaOCR(file) {
   const original = await lerFileComoDataUrl(file);
   const img = await new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = reject; i.src = original; });
   const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
   const maior = Math.max(w0, h0);
-  // alvo: lado maior entre 1800 e 2600px
   let escala = 1;
   if (maior < 1800) escala = 1800 / maior;
   else if (maior > 2600) escala = 2600 / maior;
@@ -91,7 +90,6 @@ async function prepararImagemParaOCR(file) {
     const g = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
     d[i] = d[i + 1] = d[i + 2] = g; hist[g]++;
   }
-  // estica o contraste usando percentis 2% e 98%
   const total = canvas.width * canvas.height;
   let acc = 0, lo = 0, hi = 255;
   for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= total * 0.02) { lo = v; break; } }
@@ -124,7 +122,6 @@ async function lerTextoDaImagem(file) {
     const res = await worker.recognize(canvas);
     textoMelhorado = res.data.text || '';
   } catch (e) { console.warn('OCR pré-processado falhou', e); }
-  // se não achou valor, tenta com a imagem original
   if (!extrairValorDoTexto(textoMelhorado)) {
     try {
       const res2 = await Tesseract.recognize(file, 'por');
@@ -147,7 +144,7 @@ function dataValida_(dia, mes, ano) {
   const dt = new Date(ano, mes - 1, dia);
   if (dt.getMonth() !== mes - 1) return false;
   const amanha = new Date(); amanha.setDate(amanha.getDate() + 1);
-  return dt <= amanha; // comprovante não pode ser do futuro
+  return dt <= amanha;
 }
 
 function extrairDataDoTexto(texto) {
@@ -193,13 +190,11 @@ function extrairHoraDoTexto(texto) {
   return candidatos[0].v;
 }
 
-// Procura o valor PAGO: pontua cada valor monetário pela palavra-chave
-// da linha (e da linha anterior) e escolhe o melhor.
 function extrairValorDoTexto(texto) {
   if (!texto) return '';
   let t = String(texto).toUpperCase();
-  t = t.replace(/R\s?S(?=\s*\d)/g, 'R$');            // "RS 66,00" -> "R$ 66,00"
-  t = t.replace(/(\d)\s+([,.])\s*(\d{2})(?!\d)/g, '$1$2$3'); // "66 ,00" -> "66,00"
+  t = t.replace(/R\s?S(?=\s*\d)/g, 'R$');
+  t = t.replace(/(\d)\s+([,.])\s*(\d{2})(?!\d)/g, '$1$2$3');
   const linhas = t.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
   const fortes = [
@@ -229,12 +224,11 @@ function extrairValorDoTexto(texto) {
     let m;
     while ((m = re.exec(linha)) !== null) {
       const antes = linha[m.index - 1] || '', depois = linha[m.index + m[0].length] || '';
-      if (/[\d,.\/:]/.test(antes)) continue;      // pedaço de outro número / data
-      if (/[\.\/:]/.test(depois) && /\d/.test(linha[m.index + m[0].length + 1] || '')) continue; // data 12.05.2025
+      if (/[\d,.\/:]/.test(antes)) continue;
+      if (/[\.\/:]/.test(depois) && /\d/.test(linha[m.index + m[0].length + 1] || '')) continue;
       const valor = parseFloat(m[1].replace(/\./g, '') + '.' + m[2]);
       if (valor >= 0.5 && valor < 50000) candidatos.push({ valor, score });
     }
-    // "R$ 6600" (sem separador) => 66,00
     const reSem = /R\$\s*(\d{3,6})(?![\d,.])/g;
     while ((m = reSem.exec(linha)) !== null) {
       const valor = parseFloat(m[1].slice(0, -2) + '.' + m[1].slice(-2));
@@ -260,7 +254,6 @@ const ESTADOS_UF = {
   'PARA': 'PA', 'PARAIBA': 'PB', 'PARANA': 'PR', 'PERNAMBUCO': 'PE', 'PIAUI': 'PI', 'RIO DE JANEIRO': 'RJ', 'RIO GRANDE DO NORTE': 'RN',
   'RIO GRANDE DO SUL': 'RS', 'RONDONIA': 'RO', 'RORAIMA': 'RR', 'SANTA CATARINA': 'SC', 'SAO PAULO': 'SP', 'SERGIPE': 'SE', 'TOCANTINS': 'TO'
 };
-// palavras que indicam que o trecho NÃO é nome de cidade
 const PALAVRAS_NAO_CIDADE = new Set(['RUA', 'AV', 'AVENIDA', 'ROD', 'RODOVIA', 'LOJA', 'CNPJ', 'CPF', 'TOTAL', 'VALOR', 'CUPOM', 'FISCAL', 'NOTA', 'DATA', 'HORA', 'CARTAO', 'CREDITO', 'DEBITO', 'PIX', 'ITEM', 'QTD', 'TROCO', 'ENDERECO', 'END', 'BAIRRO', 'CEP', 'IE', 'IM', 'TEL', 'FONE', 'LTDA', 'EIRELI', 'ME', 'SA', 'CAIXA', 'OPERADOR', 'CODIGO', 'COD', 'NSU', 'AUT', 'AGENCIA', 'CONTA', 'VENDA', 'ESTADO', 'UF', 'CIDADE', 'MUNICIPIO', 'MUN', 'CID', 'PRACA', 'TRAVESSA', 'ALAMEDA', 'QUADRA', 'LOTE', 'SALA', 'CENTRO', 'BR', 'KM', 'NUMERO', 'NRO', 'SN', 'S/N', 'COMPROVANTE', 'VIA', 'CLIENTE', 'ESTABELECIMENTO', 'TERMINAL', 'DOC', 'MERCHANT']);
 
 function semAcentos_(s) { return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
@@ -270,18 +263,14 @@ function tituloCidade_(s) {
   return String(s).toLowerCase().split(/\s+/).filter(Boolean).map((p, i) => (i > 0 && pequenas.has(p)) ? p : p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
 }
 
-// Limpa o trecho que veio antes da UF, ficando só com o nome provável da cidade
 function limparNomeCidade_(bruto) {
   let s = String(bruto || '');
-  s = s.split(/[\d,;:|]/).pop();                       // pega o que vem depois do último número/vírgula/dois-pontos
+  s = s.split(/[\d,;:|]/).pop();
   s = s.replace(/[^A-ZÀ-Ü' ]+/g, ' ').replace(/\s+/g, ' ').trim();
   let palavras = s.split(' ').filter(Boolean);
-  // remove palavras de endereço/rótulo do começo
   while (palavras.length && (PALAVRAS_NAO_CIDADE.has(semAcentos_(palavras[0])) || palavras[0].length < 2)) palavras.shift();
   if (palavras.length > 4) palavras = palavras.slice(-4);
-  // se ainda sobrou palavra proibida no meio, descarta
   if (palavras.some(p => PALAVRAS_NAO_CIDADE.has(semAcentos_(p)) && !['SANTA', 'SANTO'].includes(p))) {
-    // mantém só o trecho depois da última palavra proibida
     let idxUlt = -1;
     palavras.forEach((p, i) => { if (PALAVRAS_NAO_CIDADE.has(semAcentos_(p))) idxUlt = i; });
     palavras = palavras.slice(idxUlt + 1);
@@ -300,24 +289,20 @@ function extrairLocalDoTexto(texto) {
 
   linhas.forEach((linha, idx) => {
     let m;
-    // 1) com rótulo: "CIDADE: SANTA INES - MA" / "MUNICIPIO SANTA INES UF: MA"
     const r1 = new RegExp(`(?:CIDADE|MUNIC[IÍ]PIO|MUN|CID)\\s*[:\\-]?\\s*([A-ZÀ-Ü][A-ZÀ-Ü' ]{2,40}?)\\s*(?:${SEP}|UF\\s*[:\\-]?|\\s)\\s*${UF}`);
     m = r1.exec(linha);
     if (m) { const c = limparNomeCidade_(m[1]); if (c) candidatos.push({ cidade: c, uf: m[2], score: 12, i: idx }); }
 
-    // 2) logo depois do CEP: "65300-000 SANTA INES - MA"
     const r2 = new RegExp(`\\d{5}\\s?-?\\s?\\d{3}\\s*${SEP}?\\s*([A-ZÀ-Ü][A-ZÀ-Ü' ]{2,40}?)\\s*(?:${SEP}|\\s)\\s*${UF}`);
     m = r2.exec(linha);
     if (m) { const c = limparNomeCidade_(m[1]); if (c) candidatos.push({ cidade: c, uf: m[2], score: 10, i: idx }); }
 
-    // 3) "NOME - UF", "NOME/UF", "NOME, UF"
     const r3 = new RegExp(`([A-ZÀ-Ü][A-ZÀ-Ü' .]{2,60}?)\\s*${SEP}\\s*${UF}`, 'g');
     while ((m = r3.exec(linha)) !== null) {
       const c = limparNomeCidade_(m[1]);
       if (c) candidatos.push({ cidade: c, uf: m[2], score: /CNPJ|CEP|END|RUA|AV|LOJA|BAIRRO/.test(linha) ? 7 : 5, i: idx });
     }
 
-    // 4) fim da linha de endereço sem separador: "... CENTRO SANTA INES MA" (só se tiver CEP ou "END" na linha)
     if (/CEP|END|RUA|AV |AVENIDA|RODOVIA/.test(linha)) {
       const r4 = new RegExp(`([A-ZÀ-Ü][A-ZÀ-Ü' ]{2,40}?)\\s+${UF}\\s*$`);
       m = r4.exec(linha);
@@ -331,7 +316,6 @@ function extrairLocalDoTexto(texto) {
   return `${tituloCidade_(melhor.cidade)} - ${melhor.uf}`;
 }
 
-// Fallback: localização do aparelho (GPS) -> cidade/UF (OpenStreetMap/Nominatim)
 function obterLocalPorGPS() {
   return new Promise((resolve) => {
     if (!navigator.geolocation) { resolve(''); return; }
@@ -389,7 +373,6 @@ async function converterFileParaBase64(file) {
   } catch (e) { return original; }
 }
 
-// Busca a imagem no Drive (via Apps Script) e guarda em cache
 async function obterImagemComprovante(idComp) {
   if (cacheImagens[idComp]) return cacheImagens[idComp];
   const r = await fetchAPI({ action: 'getComprovanteImagem', idComprovante: idComp, login: userData.login, nivel: userData.nivel });
@@ -401,7 +384,6 @@ async function obterImagemComprovante(idComp) {
   return null;
 }
 
-// Se a miniatura do Drive falhar, carrega pelo Apps Script
 function fallbackThumb(img) {
   if (img.dataset.tentou) { img.style.display = 'none'; return; }
   img.dataset.tentou = '1';
@@ -413,7 +395,6 @@ function htmlMiniatura(c, tamanho = 'h-12 w-12') {
   return `<img src="${montarUrlThumbnailDrive(c.urlComprovante)}" data-id="${c.idComprovante}" alt="Comprovante" loading="lazy" referrerpolicy="no-referrer" class="${tamanho} object-cover rounded border cursor-pointer bg-slate-100" onclick="abrirVisualizador('${c.idComprovante}')" onerror="fallbackThumb(this)">`;
 }
 
-// ----- Visualizador (ver / baixar / imprimir) -----
 async function abrirVisualizador(idComp) {
   visualizadorIdAtual = idComp;
   const modal = document.getElementById('modalVisualizador');
@@ -436,7 +417,6 @@ async function baixarComprovante(idComp) {
   document.body.appendChild(a); a.click(); a.remove();
 }
 
-// Imprime SOMENTE a imagem (iframe oculto, sem popup)
 async function imprimirComprovante(idComp) {
   const id = idComp || visualizadorIdAtual;
   const x = await obterImagemComprovante(id);
@@ -454,13 +434,11 @@ async function imprimirComprovante(idComp) {
 }
 
 // ============================================================
-//  GARANTE OS CAMPOS/COLUNAS DE LOCAL (mesmo se o index.html for antigo)
+//  GARANTE OS CAMPOS DE LOCAL (mesmo se o index.html for antigo)
 // ============================================================
 function garantirCamposLocal() {
-  const TH = 'px-4 py-3 font-bold text-slate-500 uppercase text-[10px]';
   const LBL = 'block text-[10px] font-bold text-slate-500 mb-1';
   const INP = 'w-full px-3 py-2 text-sm border rounded bg-slate-50';
-  // campo na tela de leitura (OCR)
   if (!document.getElementById('ocrLocal')) {
     const ref = document.getElementById('ocrValor'), bloco = ref && ref.closest('.grid');
     if (bloco && bloco.parentNode) {
@@ -469,7 +447,6 @@ function garantirCamposLocal() {
       bloco.parentNode.insertBefore(d, bloco);
     }
   }
-  // campo na tela de edição
   if (!document.getElementById('editLocal')) {
     const ref = document.getElementById('editValor'), bloco = ref && ref.closest('.grid');
     if (bloco && bloco.parentNode) {
@@ -478,16 +455,67 @@ function garantirCamposLocal() {
       bloco.parentNode.insertBefore(d, bloco);
     }
   }
-  // coluna "Local" no detalhe da viagem
-  const tbV = document.getElementById('tbItensViagem');
-  const tabV = tbV && tbV.closest('table');
-  const trV = tabV && tabV.querySelector('thead tr');
-  if (trV && trV.children.length === 6) {
-    const th = document.createElement('th'); th.className = TH; th.textContent = 'Local'; trV.insertBefore(th, trV.children[2]);
-    const tdTotal = tabV.querySelector('tfoot td[colspan]'); if (tdTotal) tdTotal.setAttribute('colspan', '4');
-  }
 }
 garantirCamposLocal();
+
+// ============================================================
+//  AGRUPAMENTO: UMA VIAGEM = VÁRIOS TÉCNICOS
+// ============================================================
+const ST_ARQ = ['FECHADA', 'ARQUIVADA', 'CANCELADO'];
+const ST_ATIVOS_ORDEM = ['PENDENTE', 'SOLICITAR CORRECAO', 'ABERTO'];
+const STATUS_UI = {
+  'PENDENTE': { label: 'Aguardando aprovação', curto: 'Pendente', badge: 'bg-amber-100 text-amber-700 border-amber-200', bar: 'border-l-amber-500', dot: 'bg-amber-500', icon: 'fa-hourglass-half', txt: 'text-amber-600' },
+  'SOLICITAR CORRECAO': { label: 'Correção solicitada', curto: 'Correção', badge: 'bg-red-100 text-red-700 border-red-200', bar: 'border-l-red-500', dot: 'bg-red-500', icon: 'fa-rotate-left', txt: 'text-red-600' },
+  'ABERTO': { label: 'Em andamento (abertas)', curto: 'Aberto', badge: 'bg-blue-100 text-blue-700 border-blue-200', bar: 'border-l-blue-500', dot: 'bg-blue-500', icon: 'fa-folder-open', txt: 'text-blue-600' },
+  'FECHADA': { label: 'Fechada', curto: 'Fechada', badge: 'bg-emerald-100 text-emerald-700 border-emerald-200', bar: 'border-l-emerald-500', dot: 'bg-emerald-500', icon: 'fa-circle-check', txt: 'text-emerald-600' },
+  'ARQUIVADA': { label: 'Arquivada', curto: 'Arquivada', badge: 'bg-slate-200 text-slate-600 border-slate-300', bar: 'border-l-slate-400', dot: 'bg-slate-400', icon: 'fa-box-archive', txt: 'text-slate-500' },
+  'CANCELADO': { label: 'Cancelada', curto: 'Cancelada', badge: 'bg-slate-200 text-slate-500 border-slate-300 line-through', bar: 'border-l-slate-300', dot: 'bg-slate-300', icon: 'fa-ban', txt: 'text-slate-400' }
+};
+function uiStatus(s) { return STATUS_UI[s] || STATUS_UI.ABERTO; }
+
+function normChave(s) { return semAcentos_(String(s || '')).toLowerCase().replace(/\s+/g, ' ').trim(); }
+function chaveGrupo(v) {
+  if (v.idGrupo) return 'g:' + v.idGrupo;
+  return 'k:' + String(v.sigla || '').toUpperCase() + '|' + normChave(v.motivo) + '|' + lower(v.criadoPor);
+}
+function kAttr(k) { return encodeURIComponent(k).replace(/'/g, '%27'); }
+function nomeTecnico(login) { return nomesUsuarios[lower(login)] || login || '—'; }
+function valorNum(v) { return Number(String(v || 0).replace(',', '.')) || 0; }
+function somaItens(itens) { return (itens || []).reduce((a, i) => a + valorNum(i.valor), 0); }
+function formatarMoedaBR(n) { return 'R$ ' + (Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+function statusAgregado(ms) {
+  const st = ms.map(m => m.status);
+  if (st.includes('PENDENTE')) return 'PENDENTE';
+  if (st.includes('SOLICITAR CORRECAO')) return 'SOLICITAR CORRECAO';
+  if (st.includes('ABERTO')) return 'ABERTO';
+  if (st.every(s => s === 'ARQUIVADA')) return 'ARQUIVADA';
+  if (st.every(s => s === 'CANCELADO')) return 'CANCELADO';
+  return 'FECHADA';
+}
+
+function gruposDe(lista) {
+  const mapa = new Map();
+  (lista || []).forEach(v => {
+    const k = chaveGrupo(v);
+    if (!mapa.has(k)) mapa.set(k, { key: k, sigla: v.sigla, motivo: v.motivo, criadoPor: v.criadoPor, membros: [] });
+    mapa.get(k).membros.push(v);
+  });
+  return Array.from(mapa.values()).map(g => {
+    g.membros.sort((a, b) => nomeTecnico(a.colaborador).localeCompare(nomeTecnico(b.colaborador)));
+    g.statusAgg = statusAgregado(g.membros);
+    g.arquivado = g.membros.every(m => ST_ARQ.includes(m.status));
+    g.nItens = g.membros.reduce((a, m) => a + (m.itens || []).length, 0);
+    g.total = g.membros.reduce((a, m) => a + somaItens(m.itens), 0);
+    return g;
+  });
+}
+function grupoAtual() { return gruposDe(viagensGlobais).find(g => g.key === grupoAtualKey) || null; }
+function viagemPorId(id) { return viagensGlobais.find(v => v.idViagem === id) || null; }
+function acharItem(idComp) {
+  for (const v of viagensGlobais) { const it = (v.itens || []).find(c => c.idComprovante === idComp); if (it) return { item: it, membro: v }; }
+  return null;
+}
 
 // ==================== SESSÃO ====================
 window.onload = () => {
@@ -498,7 +526,7 @@ window.onload = () => {
 function logout() {
   pararPolling();
   localStorage.removeItem('usuarioDespesasAtivo'); localStorage.removeItem('loginDespesasTimestamp');
-  userData = null; viagemAtual = null; viagensGlobais = []; jaCarregou = false; lastSig = ''; tecnicos = [];
+  userData = null; grupoAtualKey = null; viagensGlobais = []; jaCarregou = false; lastSig = ''; tecnicos = []; usuariosPromise = null;
   document.getElementById('globalHeader').classList.add('hidden'); document.getElementById('mainContent').classList.add('hidden');
   document.getElementById('viagemDetalheView').classList.add('hidden'); document.getElementById('authView').classList.remove('hidden');
 }
@@ -544,13 +572,12 @@ async function fetchAPI(data, btnId = null, textId = null, originalText = null) 
   finally { if (btn) { btn.disabled = false; if (textId) document.getElementById(textId).innerHTML = originalText; } }
 }
 
-// Requisição "silenciosa" (sem toasts) usada pela sincronização
 async function postAPI(data) {
   try { const r = await fetch(API_URL, { method: 'POST', body: JSON.stringify(data) }); return await r.json(); }
   catch (e) { return null; }
 }
 
-// ==================== AUTH & PAINEL ====================
+// ==================== AUTH ====================
 function toggleAuthView(v) {
   if (v === 'register') { document.getElementById('loginSection').classList.add('hidden'); document.getElementById('registerSection').classList.remove('hidden'); }
   else { document.getElementById('registerSection').classList.add('hidden'); document.getElementById('loginSection').classList.remove('hidden'); }
@@ -571,9 +598,25 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
 function iniciarSistema() {
   document.getElementById('authView').classList.add('hidden'); document.getElementById('globalHeader').classList.remove('hidden'); document.getElementById('mainContent').classList.remove('hidden');
   document.getElementById('navUserName').textContent = `${userData.nome} ${userData.sobrenome}`; document.getElementById('navUserRole').textContent = `${userData.nivel}`;
-  jaCarregou = false; lastSig = ''; viagensGlobais = [];
+  jaCarregou = false; lastSig = ''; viagensGlobais = []; abaAtiva = 'ATIVAS'; filtroStatus = 'TODOS'; filtroLojaSelecionada = 'TODAS';
+  carregarUsuarios();
   recarregarDashboard();
   iniciarPolling();
+}
+
+// ==================== USUÁRIOS (nomes + lista de técnicos) ====================
+function carregarUsuarios() {
+  if (!usuariosPromise) {
+    usuariosPromise = postAPI({ action: 'getUsers' }).then(r => {
+      if (r && r.success) {
+        (r.users || []).forEach(u => { nomesUsuarios[lower(u.login)] = u.nome; });
+        tecnicos = (r.users || []).filter(u => !RX_GESTAO.test(u.nivel || ''));
+        if (userData) renderTudo();
+      } else usuariosPromise = null;
+      return tecnicos;
+    });
+  }
+  return usuariosPromise;
 }
 
 // ==================== SINCRONIZAÇÃO AUTOMÁTICA ====================
@@ -606,32 +649,36 @@ async function atualizarViagens() {
 
 function detectarMudancas(antigas, novas) {
   const mapa = {}; antigas.forEach(v => { mapa[v.idViagem] = v; });
+  const avisados = new Set();
   novas.forEach(v => {
     const o = mapa[v.idViagem];
-    if (!o) { if (String(v.criadoPor).toLowerCase() !== String(userData.login).toLowerCase()) showToast(`${v.sigla} - ${v.motivo}`, 'info', 'Nova viagem'); }
-    else if (o.status !== v.status) showToast(`${v.sigla}: ${o.status} → ${v.status}`, 'info', 'Status atualizado');
-    else if (isGestaoUser() && (v.itens || []).length > (o.itens || []).length) showToast(`${v.sigla}: nova despesa lançada.`, 'info', 'Ao vivo');
+    if (!o) {
+      const k = chaveGrupo(v);
+      if (!avisados.has(k) && lower(v.criadoPor) !== lower(userData.login)) { avisados.add(k); showToast(`${v.sigla} - ${v.motivo}`, 'info', 'Nova viagem'); }
+    }
+    else if (o.status !== v.status) showToast(`${v.sigla} (${nomeTecnico(v.colaborador)}): ${o.status} → ${v.status}`, 'info', 'Status atualizado');
+    else if (isGestaoUser() && (v.itens || []).length > (o.itens || []).length) showToast(`${v.sigla} (${nomeTecnico(v.colaborador)}): nova despesa lançada.`, 'info', 'Ao vivo');
   });
 }
 
 function aplicarViagens(novas) {
-  if (busy > 0) return; // ação do usuário em andamento: não sobrescreve a tela otimista
+  if (busy > 0) return;
   const sig = JSON.stringify(novas);
   if (sig === lastSig && jaCarregou) return;
   lastSig = sig;
   if (jaCarregou) detectarMudancas(viagensGlobais, novas);
   viagensGlobais = novas; jaCarregou = true;
-  if (filtroLojaSelecionada !== 'TODAS' && !novas.some(v => v.sigla === filtroLojaSelecionada)) filtroLojaSelecionada = 'TODAS';
-  renderFiltrosSiglas(); renderViagensGrid();
-  if (viagemAtual) {
-    const nova = novas.find(v => v.idViagem === viagemAtual.idViagem);
-    if (!nova) { showToast('Esta viagem foi removida.', 'warning'); mostrarLista(); }
-    else { viagemAtual = nova; renderDetalhe(); }
-  }
+  if (grupoAtualKey && !grupoAtual()) { showToast('Esta viagem foi removida.', 'warning'); mostrarLista(); }
+  renderTudo();
+}
+
+function renderTudo() {
+  renderPainel();
+  if (grupoAtualKey && grupoAtual()) renderDetalhe();
 }
 
 function mostrarLista() {
-  viagemAtual = null;
+  grupoAtualKey = null;
   document.getElementById('viagemDetalheView').classList.add('hidden');
   document.getElementById('mainContent').classList.remove('hidden');
 }
@@ -639,57 +686,102 @@ function mostrarLista() {
 function montarCabecalhoPainel() {
   const isGestao = isGestaoUser();
   document.getElementById('dashTitle').innerHTML = isGestao ? `<i class="fa-solid fa-user-shield text-emerald-600 mr-2"></i> Painel da Gestão` : `<i class="fa-solid fa-plane-departure text-emerald-600 mr-2"></i> Minhas Viagens`;
-  document.getElementById('dashSubtitle').textContent = isGestao ? "Acompanhe e autorize reembolsos organizados por sigla da loja." : "Receba viagens criadas pela coordenação e envie seus comprovantes.";
+  document.getElementById('dashSubtitle').textContent = isGestao ? "Acompanhe e autorize reembolsos. Cada viagem reúne todos os técnicos escolhidos." : "Receba viagens criadas pela coordenação e envie seus comprovantes.";
   const btnArea = document.getElementById('dashActionButtons'); btnArea.innerHTML = '';
   if (isGestao) {
     btnArea.innerHTML = `<button onclick="abrirModalCriarViagem()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded shadow text-sm transition"><i class="fa-solid fa-plus mr-2"></i> Criar Número da Viagem</button>`;
-    carregarUsuariosParaSelect();
+    carregarUsuarios();
   }
 }
 
 async function recarregarDashboard() {
   mostrarLista();
   montarCabecalhoPainel();
-  if (viagensGlobais.length) { renderFiltrosSiglas(); renderViagensGrid(); }
-  else document.getElementById('gridViagens').innerHTML = '<div class="col-span-full text-center py-10 text-slate-500"><i class="fa-solid fa-spinner fa-spin text-2xl"></i><br>Carregando viagens...</div>';
+  if (viagensGlobais.length) renderPainel();
+  else document.getElementById('gridViagens').innerHTML = '<div class="text-center py-10 text-slate-500"><i class="fa-solid fa-spinner fa-spin text-2xl"></i><br>Carregando viagens...</div>';
   await atualizarViagens();
 }
 
-function renderFiltrosSiglas() {
-  const div = document.getElementById('filtroSiglasLojas'); let html = '';
-  const siglas = ["TODAS"]; viagensGlobais.forEach(v => { if (!siglas.includes(v.sigla)) siglas.push(v.sigla); });
-  siglas.forEach(s => {
+// ==================== PAINEL PRINCIPAL (abas, resumo, seções) ====================
+function garantirPainel() {
+  if ($('abasViagens')) return;
+  const ref = $('filtroSiglasLojas');
+  const abas = document.createElement('div'); abas.id = 'abasViagens'; abas.className = 'mb-4 flex gap-2 border-b border-slate-300';
+  const resumo = document.createElement('div'); resumo.id = 'painelResumo'; resumo.className = 'mb-5 grid grid-cols-2 md:grid-cols-4 gap-3';
+  ref.parentNode.insertBefore(abas, ref);
+  ref.parentNode.insertBefore(resumo, ref);
+  $('gridViagens').className = 'space-y-8 fade-in';
+}
+
+function setAba(a) { abaAtiva = a; filtroLojaSelecionada = 'TODAS'; filtroStatus = 'TODOS'; renderPainel(); }
+function setFiltroStatus(s) { filtroStatus = (filtroStatus === s) ? 'TODOS' : s; renderPainel(); }
+function filtrarPorLoja(sigla) { filtroLojaSelecionada = sigla; renderPainel(); }
+
+function renderPainel() {
+  garantirPainel();
+  const grupos = gruposDe(viagensGlobais);
+  const ativas = grupos.filter(g => !g.arquivado);
+  const arq = grupos.filter(g => g.arquivado);
+
+  // abas
+  const aba = (id, icon, txt, n) => {
+    const on = abaAtiva === id;
+    return `<button onclick="setAba('${id}')" class="px-4 py-2.5 text-sm font-bold -mb-px border-b-2 transition ${on ? 'border-emerald-600 text-emerald-700' : 'border-transparent text-slate-500 hover:text-slate-800'}"><i class="fa-solid ${icon} mr-2"></i>${txt} <span class="ml-1 text-[10px] px-2 py-0.5 rounded-full ${on ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}">${n}</span></button>`;
+  };
+  $('abasViagens').innerHTML = aba('ATIVAS', 'fa-layer-group', 'Ativas', ativas.length) + aba('ARQUIVADAS', 'fa-box-archive', 'Arquivadas', arq.length);
+
+  // resumo (filtros por status) - só nas ativas
+  const boxResumo = $('painelResumo');
+  if (abaAtiva === 'ATIVAS') {
+    boxResumo.classList.remove('hidden');
+    const tile = (st) => {
+      const u = uiStatus(st), n = ativas.filter(g => g.statusAgg === st).length;
+      const on = filtroStatus === st;
+      return `<button onclick="setFiltroStatus('${st}')" class="text-left bg-white rounded-xl border-l-4 ${u.bar} border border-slate-200 p-4 shadow-sm hover:shadow-md transition ${on ? 'ring-2 ring-slate-800' : ''}"><div class="flex items-center justify-between"><span class="text-[10px] font-bold uppercase tracking-wider text-slate-500">${u.label}</span><i class="fa-solid ${u.icon} ${u.txt}"></i></div><div class="text-3xl font-black text-slate-800 mt-1">${n}</div></button>`;
+    };
+    const totalAtivas = ativas.reduce((a, g) => a + g.total, 0);
+    boxResumo.innerHTML = tile('PENDENTE') + tile('SOLICITAR CORRECAO') + tile('ABERTO') +
+      `<div class="bg-slate-900 rounded-xl p-4 shadow-sm"><div class="flex items-center justify-between"><span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total nas ativas</span><i class="fa-solid fa-wallet text-emerald-400"></i></div><div class="text-xl font-black text-emerald-400 mt-2">${formatarMoedaBR(totalAtivas)}</div></div>`;
+  } else { boxResumo.classList.add('hidden'); boxResumo.innerHTML = ''; }
+
+  // filtro por sigla (da aba atual)
+  const base = abaAtiva === 'ATIVAS' ? ativas : arq;
+  const siglas = ['TODAS']; base.forEach(g => { if (!siglas.includes(g.sigla)) siglas.push(g.sigla); });
+  if (!siglas.includes(filtroLojaSelecionada)) filtroLojaSelecionada = 'TODAS';
+  $('filtroSiglasLojas').innerHTML = siglas.map(s => {
     const active = (filtroLojaSelecionada === s) ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-slate-100 border';
-    html += `<button onclick="filtrarPorLoja('${s}')" class="${active} px-4 py-1.5 rounded-full font-bold text-xs shadow-sm transition uppercase whitespace-nowrap">${s}</button>`;
-  });
-  div.innerHTML = html;
-}
-function filtrarPorLoja(sigla) { filtroLojaSelecionada = sigla; renderFiltrosSiglas(); renderViagensGrid(); }
+    return `<button onclick="filtrarPorLoja('${s}')" class="${active} px-4 py-1.5 rounded-full font-bold text-xs shadow-sm transition uppercase whitespace-nowrap">${escaparTextoHtml(s)}</button>`;
+  }).join('');
 
-function renderViagensGrid() {
-  const grid = document.getElementById('gridViagens'); let html = '';
-  let lista = viagensGlobais;
-  if (filtroLojaSelecionada !== "TODAS") lista = lista.filter(v => v.sigla === filtroLojaSelecionada);
-  if (lista.length === 0) { grid.innerHTML = `<div class="col-span-full text-center py-10 bg-white border border-dashed rounded text-slate-400"><i class="fa-solid fa-folder-open text-3xl mb-2"></i><br>Nenhuma viagem encontrada.</div>`; return; }
-  lista.forEach(v => {
-    let badge = 'bg-slate-100 text-slate-600';
-    if (v.status === 'ABERTO') badge = 'bg-blue-100 text-blue-700 border-blue-200';
-    if (v.status === 'PENDENTE') badge = 'bg-amber-100 text-amber-700 border-amber-200';
-    if (v.status === 'SOLICITAR CORRECAO') badge = 'bg-red-100 text-red-700 border-red-200';
-    if (v.status === 'FECHADA' || v.status === 'ARQUIVADA') badge = 'bg-emerald-100 text-emerald-700 border-emerald-200';
-    if (v.status === 'CANCELADO') badge = 'bg-slate-200 text-slate-500 line-through';
-    html += `<div onclick="abrirViagemDetalhe('${v.idViagem}')" class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-400 cursor-pointer transition flex flex-col justify-between"><div><div class="flex justify-between items-start mb-2"><span class="bg-slate-900 text-emerald-400 px-3 py-1 rounded text-xs font-black uppercase tracking-wider">${v.sigla}</span><span class="${badge} text-[10px] font-bold px-2 py-0.5 rounded border uppercase">${v.status}</span></div><h3 class="text-base font-bold text-slate-800 line-clamp-2 mt-2" title="${escaparAtributoHtml(v.motivo)}">${escaparTextoHtml(v.motivo)}</h3></div><div class="mt-4 pt-3 border-t text-xs text-slate-500 flex justify-between items-end"><div><p class="text-[11px]">Solicitou: <b>${v.criadoPor}</b></p><p class="text-[11px]">Técnico: <b>${v.colaborador}</b></p></div><span class="text-emerald-600 font-bold text-xs"><i class="fa-solid fa-paperclip"></i> ${v.itens.length} despesa(s)</span></div></div>`;
-  });
-  grid.innerHTML = html;
-}
+  let lista = base.filter(g => filtroLojaSelecionada === 'TODAS' || g.sigla === filtroLojaSelecionada);
+  const grid = $('gridViagens');
 
-// ==================== COORDENAÇÃO: CRIAR VIAGEM (vários técnicos) ====================
-async function carregarUsuariosParaSelect() {
-  if (tecnicos.length) return;
-  const r = await postAPI({ action: 'getUsers' });
-  if (r && r.success) tecnicos = (r.users || []).filter(u => !RX_GESTAO.test(u.nivel || ''));
+  if (abaAtiva === 'ATIVAS') {
+    if (filtroStatus !== 'TODOS') lista = lista.filter(g => g.statusAgg === filtroStatus);
+    if (!lista.length) { grid.innerHTML = `<div class="text-center py-10 bg-white border border-dashed rounded text-slate-400"><i class="fa-solid fa-folder-open text-3xl mb-2"></i><br>Nenhuma viagem ativa${filtroStatus !== 'TODOS' ? ' neste status' : ''}.</div>`; return; }
+    let html = '';
+    ST_ATIVOS_ORDEM.forEach(st => {
+      const sec = lista.filter(g => g.statusAgg === st);
+      if (!sec.length) return;
+      const u = uiStatus(st);
+      html += `<section><div class="flex items-center gap-2 mb-3"><i class="fa-solid ${u.icon} ${u.txt}"></i><h3 class="text-sm font-black uppercase tracking-wider text-slate-700">${u.label}</h3><span class="text-[10px] font-bold bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full">${sec.length}</span><div class="flex-1 border-t border-slate-200 ml-2"></div></div><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">${sec.map(cardGrupo).join('')}</div></section>`;
+    });
+    grid.innerHTML = html;
+  } else {
+    if (!lista.length) { grid.innerHTML = `<div class="text-center py-10 bg-white border border-dashed rounded text-slate-400"><i class="fa-solid fa-box-archive text-3xl mb-2"></i><br>Nenhuma viagem arquivada.</div>`; return; }
+    lista.sort((a, b) => String(a.sigla).localeCompare(String(b.sigla)));
+    grid.innerHTML = `<section><div class="flex items-center gap-2 mb-3"><i class="fa-solid fa-box-archive text-slate-500"></i><h3 class="text-sm font-black uppercase tracking-wider text-slate-700">Viagens fechadas e arquivadas</h3><div class="flex-1 border-t border-slate-200 ml-2"></div></div><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">${lista.map(cardGrupo).join('')}</div></section>`;
+  }
 }
 
+function cardGrupo(g) {
+  const u = uiStatus(g.statusAgg);
+  const chips = g.membros.map(m => `<span class="inline-flex items-center gap-1.5 bg-slate-50 border rounded-full pl-2 pr-2.5 py-0.5 text-[11px] font-semibold text-slate-600" title="${escaparAtributoHtml(uiStatus(m.status).label)}"><span class="w-2 h-2 rounded-full ${uiStatus(m.status).dot}"></span>${escaparTextoHtml(nomeTecnico(m.colaborador))}</span>`).join('');
+  const multi = g.membros.length > 1 ? `<span class="text-[10px] font-bold text-slate-500"><i class="fa-solid fa-users mr-1"></i>${g.membros.length} técnicos</span>` : '';
+  return `<div onclick="abrirGrupo('${kAttr(g.key)}')" class="bg-white p-5 rounded-xl border border-slate-200 border-l-4 ${u.bar} shadow-sm hover:shadow-md cursor-pointer transition flex flex-col justify-between"><div><div class="flex justify-between items-start mb-2"><span class="bg-slate-900 text-emerald-400 px-3 py-1 rounded text-xs font-black uppercase tracking-wider">${escaparTextoHtml(g.sigla)}</span><span class="${u.badge} text-[10px] font-bold px-2 py-0.5 rounded border uppercase">${u.curto}</span></div><h3 class="text-base font-bold text-slate-800 line-clamp-2 mt-2" title="${escaparAtributoHtml(g.motivo)}">${escaparTextoHtml(g.motivo)}</h3><div class="flex flex-wrap gap-1.5 mt-3">${chips}</div></div><div class="mt-4 pt-3 border-t text-xs text-slate-500 flex justify-between items-end"><div><p class="text-[11px]">Solicitou: <b>${escaparTextoHtml(g.criadoPor)}</b></p>${multi}</div><div class="text-right"><p class="text-emerald-600 font-black text-sm">${formatarMoedaBR(g.total)}</p><p class="text-[10px] text-slate-400"><i class="fa-solid fa-paperclip"></i> ${g.nItens} despesa(s)</p></div></div></div>`;
+}
+
+// ==================== COORDENAÇÃO: CRIAR VIAGEM (um ticket, vários técnicos) ====================
 function checkOutrosViagem() { const v = $('novaViagemTipo').value; if (v === 'Outros') $('novaViagemOutros').classList.remove('hidden'); else { $('novaViagemOutros').classList.add('hidden'); $('novaViagemOutros').value = ''; } }
 
 async function abrirModalCriarViagem() {
@@ -698,7 +790,7 @@ async function abrirModalCriarViagem() {
   tecnicosSel = new Set();
   $('modalCriarViagem').classList.remove('hidden');
   $('listaTecnicos').innerHTML = '<p class="text-xs text-slate-400 text-center py-3"><i class="fa-solid fa-spinner fa-spin mr-1"></i> Carregando técnicos...</p>';
-  await carregarUsuariosParaSelect();
+  await carregarUsuarios();
   renderListaTecnicos();
 }
 function fecharModalCriarViagem() { $('modalCriarViagem').classList.add('hidden'); }
@@ -737,9 +829,20 @@ async function confirmarCriarViagem() {
   let tipo = $('novaViagemTipo').value;
   if (tipo === 'Outros') tipo = $('novaViagemOutros').value.trim();
   const motivo = $('novaViagemMotivo').value.trim() || tipo;
-  const logins = Array.from(tecnicosSel);
+  let logins = Array.from(tecnicosSel);
   if (!sigla || !tipo) { showToast('Informe a sigla e a categoria.', 'warning'); return; }
   if (!logins.length) { showToast('Selecione ao menos um técnico.', 'warning'); return; }
+
+  // evita duplicar quem já está numa viagem ativa igual (mesma loja + mesmo motivo)
+  const jaExistem = viagensGlobais.filter(v => String(v.sigla).toUpperCase() === sigla && normChave(v.motivo) === normChave(motivo) && !ST_ARQ.includes(v.status)).map(v => lower(v.colaborador));
+  const duplicados = logins.filter(l => jaExistem.includes(lower(l)));
+  if (duplicados.length) {
+    showToast(`Já estão nesta viagem: ${duplicados.map(l => escaparTextoHtml(nomeTecnico(l))).join(', ')}.`, 'warning', 'Ignorados', 6000);
+    logins = logins.filter(l => !duplicados.includes(l));
+    if (!logins.length) return;
+  }
+
+  const idGrupo = 'G' + Date.now();
   const btn = $('btnCriarViagem'); const original = btn.innerHTML; btn.disabled = true;
   busy++;
   const falhas = [];
@@ -749,28 +852,144 @@ async function confirmarCriarViagem() {
       btn.innerHTML = `<span class="loader-small"></span> ${i + 1}/${logins.length}`;
       const login = logins[i];
       const a = await postAPI({ action: 'initProject', login, sigla, tipoProjeto: tipo });
-      const b = await postAPI({ action: 'createDespesaViagem', sigla, motivo, colaborador: login, criadoPor: userData.login, nivel: userData.nivel });
+      const b = await postAPI({ action: 'createDespesaViagem', sigla, motivo, colaborador: login, criadoPor: userData.login, nivel: userData.nivel, idGrupo });
       if (!(a && a.success) || !(b && b.success)) falhas.push(login);
     }
   } finally { busy--; btn.disabled = false; btn.innerHTML = original; }
   fecharModalCriarViagem();
-  if (falhas.length) showToast(`Falha ao criar para: ${falhas.map(escaparTextoHtml).join(', ')}`, 'error', 'Atenção', 7000);
+  if (falhas.length) showToast(`Falha ao criar para: ${falhas.map(l => escaparTextoHtml(nomeTecnico(l))).join(', ')}`, 'error', 'Atenção', 7000);
   const ok = logins.length - falhas.length;
-  if (ok > 0) showToast(`Viagem ${sigla} criada para ${ok} técnico(s): despesas e projeto de horas abertos.`, 'success', 'Viagem Criada');
+  if (ok > 0) showToast(`Viagem ${sigla} criada com ${ok} técnico(s): despesas e projeto de horas abertos.`, 'success', 'Viagem Criada');
   atualizarViagens();
 }
 
-// ==================== EDITAR / EXCLUIR DESPESA (DENTRO DA VIAGEM) ====================
-async function recarregarEReabrirViagem() { await atualizarViagens(); }
+// ==================== DETALHE DA VIAGEM (grupo) ====================
+function abrirGrupo(keyEnc) {
+  grupoAtualKey = decodeURIComponent(keyEnc);
+  if (!grupoAtual()) { grupoAtualKey = null; return; }
+  document.getElementById('mainContent').classList.add('hidden'); document.getElementById('viagemDetalheView').classList.remove('hidden');
+  renderDetalhe();
+}
 
+function garantirDetalhe() {
+  if ($('grupoConteudo')) return;
+  const tb = $('tbItensViagem');
+  const wrapper = tb && tb.closest('.overflow-auto');
+  if (!wrapper) return;
+  const h3 = wrapper.previousElementSibling;
+  if (h3 && h3.tagName === 'H3') h3.classList.add('hidden');
+  wrapper.classList.add('hidden');
+  const box = document.createElement('div'); box.id = 'grupoConteudo'; box.className = 'space-y-6';
+  wrapper.parentNode.insertBefore(box, wrapper);
+}
+
+function renderDetalhe() {
+  const g = grupoAtual(); if (!g) return;
+  garantirDetalhe();
+  const u = uiStatus(g.statusAgg);
+  document.getElementById('detalheLojaSigla').textContent = `LOJA: ${g.sigla}`;
+  document.getElementById('detalheMotivo').textContent = g.motivo;
+  document.getElementById('detalheParticipantes').textContent = `Solicitado por: ${g.criadoPor} | ${g.membros.length > 1 ? 'Técnicos' : 'Responsável'}: ${g.membros.map(m => nomeTecnico(m.colaborador)).join(', ')}`;
+  const bg = { PENDENTE: 'bg-amber-500', 'SOLICITAR CORRECAO': 'bg-red-500', ABERTO: 'bg-blue-600', FECHADA: 'bg-emerald-500', ARQUIVADA: 'bg-slate-500', CANCELADO: 'bg-slate-500' }[g.statusAgg] || 'bg-slate-800';
+  document.getElementById('detalheStatusBadge').innerHTML = `<span class="${bg} text-white font-bold px-4 py-1.5 rounded text-xs uppercase shadow"><i class="fa-solid ${u.icon} mr-1"></i> ${u.label}</span>`;
+  renderAcoesGrupo(g);
+  renderMembros(g);
+}
+
+function renderAcoesGrupo(g) {
+  const area = document.getElementById('painelAcoesViagem');
+  const gestao = isGestaoUser();
+  let esq = '', dir = '';
+  if (gestao) {
+    const nPend = g.membros.filter(m => m.status === 'PENDENTE').length;
+    const nFech = g.membros.filter(m => m.status === 'FECHADA').length;
+    if (nPend > 0) esq += `<button onclick="alterarStatusGrupo('PENDENTE','FECHADA')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-check-double mr-2"></i> Fechar ${nPend > 1 ? 'todos os pendentes (' + nPend + ')' : 'pendente'}</button>`;
+    if (nFech > 0) esq += `<button onclick="alterarStatusGrupo('FECHADA','ARQUIVADA')" class="bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-box-archive mr-2"></i> Arquivar ${nFech > 1 ? 'fechadas (' + nFech + ')' : 'fechada'}</button>`;
+    dir += `<button onclick="excluirViagem()" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-trash mr-2"></i> Excluir viagem</button>`;
+  }
+  const podeExportar = gestao || g.membros.some(m => lower(m.colaborador) === lower(userData.login));
+  if (podeExportar) dir = `<button onclick="exportarRelatorioViagem()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-file-export mr-2"></i> Exportar relatório</button>` + dir;
+  area.innerHTML = `<div class="flex flex-wrap gap-2">${esq}</div><div class="flex flex-wrap gap-2 ml-auto">${dir}</div>`;
+}
+
+function linhaItemHtml(item, isColab, emEdicao, podeVer) {
+  const vn = valorNum(item.valor);
+  let btnAcao = '';
+  if (isColab && emEdicao) btnAcao = `<div class="flex gap-3 justify-center"><button onclick="editarComprovanteViagem('${item.idComprovante}')" class="text-amber-600 hover:text-amber-800" title="Editar"><i class="fa-solid fa-pen"></i></button><button onclick="excluirDespesaViagem('${item.idComprovante}')" class="text-red-500 hover:text-red-700" title="Excluir"><i class="fa-solid fa-trash"></i></button></div>`;
+  let cel = '<td class="px-4 py-3 text-xs text-center text-slate-300">—</td>';
+  if (podeVer) {
+    if (item.urlComprovante) {
+      cel = `<td class="px-4 py-3 text-xs"><div class="flex items-center gap-3">${htmlMiniatura(item)}<div class="flex flex-col gap-1">
+        <button type="button" class="text-[10px] font-bold text-blue-600 hover:text-blue-800 text-left" onclick="abrirVisualizador('${item.idComprovante}')"><i class="fa-solid fa-eye mr-1"></i> Ver</button>
+        <button type="button" class="text-[10px] font-bold text-emerald-600 hover:text-emerald-800 text-left" onclick="baixarComprovante('${item.idComprovante}')"><i class="fa-solid fa-download mr-1"></i> Baixar</button>
+        <button type="button" class="text-[10px] font-bold text-slate-600 hover:text-slate-800 text-left" onclick="imprimirComprovante('${item.idComprovante}')"><i class="fa-solid fa-print mr-1"></i> Imprimir</button>
+      </div></div></td>`;
+    } else cel = '<td class="px-4 py-3 text-xs text-center text-amber-600 font-bold">Sem imagem</td>';
+  }
+  const localTxt = item.localDespesa ? escaparTextoHtml(item.localDespesa) : '<span class="text-slate-300">—</span>';
+  return `<tr class="hover:bg-slate-50 border-b"><td class="px-4 py-3 text-xs">${formatarDataVisao(item.dataDespesa)}</td><td class="px-4 py-3 text-xs font-bold text-slate-700">${escaparTextoHtml(item.categoria || '')}</td><td class="px-4 py-3 text-xs font-bold text-slate-600"><i class="fa-solid fa-location-dot text-slate-400 mr-1"></i>${localTxt}</td><td class="px-4 py-3 text-xs uppercase font-bold text-slate-500">${escaparTextoHtml(item.lojaDebito || '')}</td><td class="px-4 py-3 text-xs text-right font-bold text-emerald-600">${formatarMoedaBR(vn)}</td>${cel}<td class="px-4 py-3 text-xs text-center">${btnAcao}</td></tr>`;
+}
+
+function htmlMembro(m) {
+  const gestao = isGestaoUser();
+  const isColab = lower(m.colaborador) === lower(userData.login);
+  const emEdicao = (m.status === 'ABERTO' || m.status === 'SOLICITAR CORRECAO');
+  const podeVer = gestao || isColab;
+  const u = uiStatus(m.status);
+  const itens = (m.itens || []).slice().sort((a, b) => chaveDataOrdenacao(a.dataDespesa) - chaveDataOrdenacao(b.dataDespesa));
+  const total = somaItens(itens);
+  const nome = nomeTecnico(m.colaborador);
+
+  let btns = '';
+  if (isColab && emEdicao) {
+    btns += `<button onclick="abrirModalOCR('${m.idViagem}')" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-camera mr-2"></i> Tirar Foto / Enviar Nota</button>`;
+    if (itens.length > 0) btns += `<button onclick="enviarDespesasViagem('${m.idViagem}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-paper-plane mr-2"></i> Enviar Despesas</button>`;
+  }
+  if (gestao) {
+    if (m.status === 'PENDENTE') {
+      btns += `<button onclick="alterarStatusViagem('${m.idViagem}','FECHADA')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-1.5 px-3 rounded shadow"><i class="fa-solid fa-check mr-1"></i> Fechar</button>`;
+      btns += `<button onclick="alterarStatusViagem('${m.idViagem}','SOLICITAR CORRECAO')" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold py-1.5 px-3 rounded shadow"><i class="fa-solid fa-arrow-rotate-left mr-1"></i> Solicitar Correção</button>`;
+    }
+    if (m.status === 'FECHADA') btns += `<button onclick="alterarStatusViagem('${m.idViagem}','ARQUIVADA')" class="bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold py-1.5 px-3 rounded shadow"><i class="fa-solid fa-box-archive mr-1"></i> Arquivar</button>`;
+  }
+
+  const corpo = itens.length
+    ? itens.map(i => linhaItemHtml(i, isColab, emEdicao, podeVer)).join('')
+    : '<tr><td colspan="7" class="p-6 text-center text-slate-400 text-sm">Nenhuma despesa lançada por este técnico ainda.</td></tr>';
+
+  return `<div class="border border-slate-200 border-l-4 ${u.bar} rounded-xl overflow-hidden shadow-sm">
+    <div class="bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3 border-b">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-full bg-slate-800 text-emerald-400 flex items-center justify-center font-black text-sm">${escaparTextoHtml(String(nome).charAt(0).toUpperCase())}</div>
+        <div><p class="text-sm font-bold text-slate-800 leading-tight">${escaparTextoHtml(nome)}${isColab ? ' <span class="text-[10px] text-emerald-600 font-bold">(você)</span>' : ''}</p><p class="text-[11px] text-slate-400 font-mono">${escaparTextoHtml(m.colaborador)}</p></div>
+        <span class="${u.badge} text-[10px] font-bold px-2 py-0.5 rounded border uppercase">${u.curto}</span>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">${btns}<div class="text-right pl-2"><p class="text-[10px] uppercase font-bold text-slate-400">Subtotal</p><p class="text-base font-black text-emerald-600 leading-none">${formatarMoedaBR(total)}</p></div></div>
+    </div>
+    <div class="overflow-auto custom-scrollbar"><table class="min-w-full text-sm text-left">
+      <thead class="bg-white border-b"><tr>
+        <th class="px-4 py-2 font-bold text-slate-500 uppercase text-[10px]">Data</th><th class="px-4 py-2 font-bold text-slate-500 uppercase text-[10px]">Categoria</th><th class="px-4 py-2 font-bold text-slate-500 uppercase text-[10px]">Local</th><th class="px-4 py-2 font-bold text-slate-500 uppercase text-[10px]">Loja</th><th class="px-4 py-2 font-bold text-slate-500 uppercase text-[10px] text-right">Valor</th><th class="px-4 py-2 font-bold text-slate-500 uppercase text-[10px] text-center">Comprovante</th><th class="px-4 py-2 font-bold text-slate-500 uppercase text-[10px] text-center">Ação</th>
+      </tr></thead><tbody class="divide-y divide-slate-100">${corpo}</tbody></table></div>
+  </div>`;
+}
+
+function renderMembros(g) {
+  const box = $('grupoConteudo'); if (!box) return;
+  const total = g.total;
+  const resumo = g.membros.length > 1
+    ? `<div class="flex flex-wrap gap-4 mt-1">${g.membros.map(m => `<span class="text-[11px] text-slate-300">${escaparTextoHtml(nomeTecnico(m.colaborador))}: <b class="text-white">${formatarMoedaBR(somaItens(m.itens))}</b></span>`).join('')}</div>` : '';
+  box.innerHTML = g.membros.map(htmlMembro).join('') +
+    `<div class="bg-slate-900 rounded-xl px-6 py-4 flex flex-wrap justify-between items-center gap-3"><div><span class="text-xs font-bold uppercase tracking-wider text-slate-400">Total da viagem (${g.nItens} despesa${g.nItens === 1 ? '' : 's'})</span>${resumo}</div><span class="text-2xl font-black text-emerald-400">${formatarMoedaBR(total)}</span></div>`;
+}
+
+// ==================== EDITAR / EXCLUIR DESPESA ====================
 function editarComprovanteViagem(idComp) {
-  const item = (viagemAtual && viagemAtual.itens || []).find(c => c.idComprovante === idComp);
-  if (!item) return;
+  const f = acharItem(idComp); if (!f) return;
+  const item = f.item;
   document.getElementById('editIdComprovante').value = idComp;
   document.getElementById('editData').value = formatarDataVisao(item.dataDespesa) || '';
   document.getElementById('editHora').value = formatarHoraVisao(item.horaDespesa) || '';
-  // input type=number exige PONTO decimal (com vírgula o campo fica vazio)
-  document.getElementById('editValor').value = (Number(String(item.valor || 0).replace(',', '.')) || 0).toFixed(2);
+  document.getElementById('editValor').value = valorNum(item.valor).toFixed(2);
   document.getElementById('editLoja').value = item.lojaDebito || '';
   document.getElementById('editLocal').value = item.localDespesa || '';
   document.getElementById('editCategoria').value = item.categoria || '';
@@ -806,9 +1025,8 @@ async function salvarEdicaoComprovante() {
   try { r = await fetchAPI(data, 'btnSalvarEdicao'); } finally { busy--; }
   if (r && r.success) {
     delete cacheImagens[idComp]; document.getElementById('modalEditarComprovante').classList.add('hidden'); showToast('Despesa atualizada!', 'success');
-    // atualização imediata na tela
-    const item = (viagemAtual && viagemAtual.itens || []).find(c => c.idComprovante === idComp);
-    if (item) { item.dataDespesa = data.dataDespesa; item.horaDespesa = data.horaDespesa; item.valor = data.valor; item.lojaDebito = data.lojaDebito; item.categoria = data.categoria; item.localDespesa = data.localDespesa; renderItensViagem(); }
+    const f = acharItem(idComp);
+    if (f) { Object.assign(f.item, { dataDespesa: data.dataDespesa, horaDespesa: data.horaDespesa, valor: data.valor, lojaDebito: data.lojaDebito, categoria: data.categoria, localDespesa: data.localDespesa }); renderTudo(); }
     atualizarViagens();
   }
   else { showToast(r.message || 'Erro ao atualizar.', 'error'); }
@@ -816,19 +1034,21 @@ async function salvarEdicaoComprovante() {
 
 async function excluirDespesaViagem(idComp) {
   if (!await showConfirm("Excluir esta despesa e a foto permanentemente?", { type: 'danger', icon: 'fa-trash' })) return;
-  const backup = viagemAtual.itens.slice();
-  viagemAtual.itens = viagemAtual.itens.filter(c => c.idComprovante !== idComp);
-  renderAcoesViagem(); renderItensViagem(); renderViagensGrid();
+  const f = acharItem(idComp); if (!f) return;
+  const membro = f.membro, backup = membro.itens.slice();
+  membro.itens = membro.itens.filter(c => c.idComprovante !== idComp);
+  renderTudo();
   busy++;
   let r;
   try { r = await fetchAPI({ action: 'deleteComprovante', idComprovante: idComp, login: userData.login }); } finally { busy--; }
   if (r && r.success) { delete cacheImagens[idComp]; showToast('Despesa excluída.', 'success'); atualizarViagens(); }
-  else { viagemAtual.itens = backup; renderAcoesViagem(); renderItensViagem(); renderViagensGrid(); showToast((r && r.message) || 'Erro ao excluir.', 'error'); }
+  else { membro.itens = backup; renderTudo(); showToast((r && r.message) || 'Erro ao excluir.', 'error'); }
 }
 
 // ==================== OCR MODAL ====================
-function abrirModalOCR() {
-  if (!viagemAtual) { showToast('Abra uma viagem para enviar notas.', 'warning'); return; }
+function abrirModalOCR(idViagem) {
+  if (!idViagem || !viagemPorId(idViagem)) { showToast('Abra uma viagem para enviar notas.', 'warning'); return; }
+  ocrIdViagem = idViagem;
   document.getElementById('modalOCR').classList.remove('hidden'); document.getElementById('ocrForm').classList.add('hidden'); document.getElementById('btnSalvarNota').classList.add('hidden'); document.getElementById('fileOCR').value = "";
   document.getElementById('ocrData').value = ''; document.getElementById('ocrHora').value = ''; document.getElementById('ocrValor').value = ''; document.getElementById('ocrLoja').value = ''; document.getElementById('ocrCategoria').value = ''; document.getElementById('ocrLocal').value = '';
   ocrImagemBase64 = ''; ocrMimeType = 'image/jpeg'; ocrTextoExtraido = '';
@@ -855,7 +1075,6 @@ async function processarOCR(event) {
       document.getElementById('ocrHora').value = extrairHoraDoTexto(ocrTextoExtraido);
       document.getElementById('ocrValor').value = extrairValorDoTexto(ocrTextoExtraido);
 
-      // LOCAL: 1º tenta ler do cupom (cidade - UF); 2º usa a localização do aparelho (GPS)
       let local = extrairLocalDoTexto(ocrTextoExtraido), origemLocal = 'cupom';
       if (!local) {
         const loaderEl = document.getElementById('ocrLoader');
@@ -881,7 +1100,7 @@ async function processarOCR(event) {
 }
 
 async function salvarNotaNaViagem() {
-  if (!viagemAtual) { showToast('Abra uma viagem para enviar a nota.', 'warning'); return; }
+  if (!ocrIdViagem || !viagemPorId(ocrIdViagem)) { showToast('Abra uma viagem para enviar a nota.', 'warning'); return; }
   const valorRaw = document.getElementById('ocrValor').value;
   const loja = document.getElementById('ocrLoja').value.trim();
   const categoria = document.getElementById('ocrCategoria').value;
@@ -893,26 +1112,23 @@ async function salvarNotaNaViagem() {
   let dataDespesa = document.getElementById('ocrData').value.trim();
   if (!dataDespesa) dataDespesa = new Date().toLocaleDateString('pt-BR');
 
-  const idViagem = viagemAtual.idViagem;
+  const idViagem = ocrIdViagem;
   const data = { action: 'saveComprovante', login: userData.login, idViagem, dataDespesa, horaDespesa: document.getElementById('ocrHora').value.trim(), valor: parseFloat(String(valorRaw).replace(',', '.')), lojaDebito: loja, categoria, localDespesa: document.getElementById('ocrLocal').value.trim(), ocrConteudo: String(ocrTextoExtraido || '').slice(0, 5000), imagemBase64: ocrImagemBase64, mimeType: ocrMimeType };
   busy++;
   let r, vinculou = false;
   try {
     r = await fetchAPI(data, 'btnSalvarNota');
     if (!(r && r.success)) { showToast((r && r.message) || 'Falha ao salvar.', 'error'); return; }
-    // garante o vínculo com a viagem (caso o servidor ainda não vincule sozinho)
     vinculou = await vincularNotaNaViagem(idViagem, r);
   } finally { busy--; }
   document.getElementById('modalOCR').classList.add('hidden');
   if (!vinculou) showToast('Nota salva, mas não consegui vinculá-la à viagem. Verifique o Apps Script.', 'warning');
   else if (r.urlComprovante) showToast('Despesa e foto salvas na viagem!', 'success');
   else showToast('Despesa salva, mas a foto não foi para o Drive. Verifique as permissões do Apps Script.', 'warning');
-  ocrImagemBase64 = ''; ocrMimeType = 'image/jpeg'; ocrTextoExtraido = '';
-  recarregarEReabrirViagem();
+  ocrImagemBase64 = ''; ocrMimeType = 'image/jpeg'; ocrTextoExtraido = ''; ocrIdViagem = null;
+  atualizarViagens();
 }
 
-// Vincula o comprovante recém-criado à viagem. Usa o id devolvido pelo servidor;
-// se não vier, procura o comprovante mais recente ainda sem viagem.
 async function vincularNotaNaViagem(idViagem, respostaSalvar) {
   if (respostaSalvar && (respostaSalvar.vinculado === true || respostaSalvar.idViagem === idViagem)) return true;
   let idComp = respostaSalvar && (respostaSalvar.idComprovante || respostaSalvar.id);
@@ -928,121 +1144,44 @@ async function vincularNotaNaViagem(idViagem, respostaSalvar) {
   return !!(v && v.success);
 }
 
-// ==================== DETALHES DA VIAGEM ====================
-function abrirViagemDetalhe(id) {
-  const v = viagensGlobais.find(x => x.idViagem === id); if (!v) return;
-  viagemAtual = v;
-  document.getElementById('mainContent').classList.add('hidden'); document.getElementById('viagemDetalheView').classList.remove('hidden');
-  renderDetalhe();
-}
-
-// Desenha (ou redesenha, sem trocar de tela) o detalhe da viagem aberta
-function renderDetalhe() {
-  if (!viagemAtual) return;
-  document.getElementById('detalheLojaSigla').textContent = `LOJA: ${viagemAtual.sigla}`;
-  document.getElementById('detalheMotivo').textContent = viagemAtual.motivo;
-  document.getElementById('detalheParticipantes').textContent = `Solicitado por: ${viagemAtual.criadoPor} | Responsável: ${viagemAtual.colaborador}`;
-  let badge = 'bg-slate-800 text-white';
-  if (viagemAtual.status === 'PENDENTE') badge = 'bg-amber-500 text-white';
-  if (viagemAtual.status === 'FECHADA' || viagemAtual.status === 'ARQUIVADA') badge = 'bg-emerald-500 text-white';
-  if (viagemAtual.status === 'SOLICITAR CORRECAO') badge = 'bg-red-500 text-white';
-  document.getElementById('detalheStatusBadge').innerHTML = `<span class="${badge} font-bold px-4 py-1.5 rounded text-xs uppercase shadow">${viagemAtual.status}</span>`;
-  renderAcoesViagem(); renderItensViagem();
-}
-
-function renderAcoesViagem() {
-  const area = document.getElementById('painelAcoesViagem'); area.innerHTML = '';
-  const isGestao = isGestaoUser();
-  const isColab = (String(viagemAtual.colaborador).toLowerCase() === String(userData.login).toLowerCase());
-  let direita = '';
-
-  if (isColab && (viagemAtual.status === 'ABERTO' || viagemAtual.status === 'SOLICITAR CORRECAO')) {
-    area.innerHTML += `<button onclick="abrirModalOCR()" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-camera mr-2"></i> Tirar Foto / Enviar Nota</button>`;
-    if (viagemAtual.itens.length > 0) direita += `<button onclick="enviarDespesasViagem()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-paper-plane mr-2"></i> Enviar Despesas</button>`;
-  }
-  if (isGestao) {
-    if (viagemAtual.status === 'PENDENTE') {
-      area.innerHTML += `<button onclick="alterarStatusViagem('FECHADA')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-check mr-2"></i> Fechar</button>`;
-      area.innerHTML += `<button onclick="alterarStatusViagem('SOLICITAR CORRECAO')" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-arrow-rotate-left mr-2"></i> Solicitar Correção</button>`;
-    }
-    if (viagemAtual.status === 'FECHADA') area.innerHTML += `<button onclick="alterarStatusViagem('ARQUIVADA')" class="bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-box-archive mr-2"></i> Arquivar</button>`;
-  }
-
-  // Botão EXPORTAR (relatório sem fotos) - visível para gestão e técnico responsável
-  if (isGestao || isColab) {
-    direita += `<button onclick="exportarRelatorioViagem()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-file-export mr-2"></i> Exportar</button>`;
-  }
-  if (isGestao) {
-    direita += `<button onclick="excluirViagem()" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-trash mr-2"></i> Excluir</button>`;
-  }
-  if (direita) area.innerHTML += `<div class="flex flex-wrap gap-2 ml-auto">${direita}</div>`;
-}
-
-function renderItensViagem() {
-  const tb = document.getElementById('tbItensViagem'); tb.innerHTML = '';
-  const isColab = (String(viagemAtual.colaborador).toLowerCase() === String(userData.login).toLowerCase());
-  const isGestao = isGestaoUser();
-  const podeVerComprovante = isGestao || isColab;
-  const emEdicao = (viagemAtual.status === 'ABERTO' || viagemAtual.status === 'SOLICITAR CORRECAO');
-  let total = 0;
-  if (viagemAtual.itens.length === 0) { tb.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-400">Nenhuma despesa lançada. Use “Tirar Foto / Enviar Nota”.</td></tr>'; document.getElementById('detalheTotalValor').textContent = 'R$ 0,00'; return; }
-  viagemAtual.itens.sort((a, b) => chaveDataOrdenacao(a.dataDespesa) - chaveDataOrdenacao(b.dataDespesa));
-  let html = '';
-  viagemAtual.itens.forEach(item => {
-    const valorNum = Number(String(item.valor || 0).replace(',', '.')) || 0;
-    total += valorNum;
-    let btnAcao = '';
-    if (isColab && emEdicao) btnAcao = `<div class="flex gap-3 justify-center"><button onclick="editarComprovanteViagem('${item.idComprovante}')" class="text-amber-600 hover:text-amber-800" title="Editar"><i class="fa-solid fa-pen"></i></button><button onclick="excluirDespesaViagem('${item.idComprovante}')" class="text-red-500 hover:text-red-700" title="Excluir"><i class="fa-solid fa-trash"></i></button></div>`;
-    let celulaComprovante = '<td class="px-4 py-3 text-xs text-center text-slate-300">—</td>';
-    if (podeVerComprovante) {
-      if (item.urlComprovante) {
-        celulaComprovante = `<td class="px-4 py-3 text-xs"><div class="flex items-center gap-3">${htmlMiniatura(item)}<div class="flex flex-col gap-1">
-          <button type="button" class="text-[10px] font-bold text-blue-600 hover:text-blue-800 text-left" onclick="abrirVisualizador('${item.idComprovante}')"><i class="fa-solid fa-eye mr-1"></i> Ver</button>
-          <button type="button" class="text-[10px] font-bold text-emerald-600 hover:text-emerald-800 text-left" onclick="baixarComprovante('${item.idComprovante}')"><i class="fa-solid fa-download mr-1"></i> Baixar</button>
-          <button type="button" class="text-[10px] font-bold text-slate-600 hover:text-slate-800 text-left" onclick="imprimirComprovante('${item.idComprovante}')"><i class="fa-solid fa-print mr-1"></i> Imprimir</button>
-        </div></div></td>`;
-      } else { celulaComprovante = '<td class="px-4 py-3 text-xs text-center text-amber-600 font-bold">Sem imagem</td>'; }
-    }
-    const localTxt = item.localDespesa ? escaparTextoHtml(item.localDespesa) : '<span class="text-slate-300">—</span>';
-    html += `<tr class="hover:bg-slate-50 border-b"><td class="px-4 py-3 text-xs">${formatarDataVisao(item.dataDespesa)}</td><td class="px-4 py-3 text-xs font-bold text-slate-700">${item.categoria || ''}</td><td class="px-4 py-3 text-xs font-bold text-slate-600"><i class="fa-solid fa-location-dot text-slate-400 mr-1"></i>${localTxt}</td><td class="px-4 py-3 text-xs uppercase font-bold text-slate-500">${item.lojaDebito || ''}</td><td class="px-4 py-3 text-xs text-right font-bold text-emerald-600">R$ ${valorNum.toFixed(2).replace('.', ',')}</td>${celulaComprovante}<td class="px-4 py-3 text-xs text-center">${btnAcao}</td></tr>`;
-  });
-  tb.innerHTML = html;
-  document.getElementById('detalheTotalValor').textContent = `R$ ${total.toFixed(2).replace('.', ',')}`;
-}
-
 // ============================================================
-//  RELATÓRIO / EXPORTAR (sem fotos, com logo da TI)
+//  RELATÓRIO / EXPORTAR (sem fotos, com logo da TI) - todos os técnicos da viagem
 // ============================================================
 function escaparTextoHtml(valor) {
   return String(valor == null ? '' : valor).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
-function formatarMoedaBR(n) {
-  return 'R$ ' + (Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
 
 function exportarRelatorioViagem() {
-  if (!viagemAtual) return;
-  const itens = (viagemAtual.itens || []).slice().sort((a, b) => chaveDataOrdenacao(a.dataDespesa) - chaveDataOrdenacao(b.dataDespesa));
-  if (itens.length === 0) { showToast('Não há despesas para exportar.', 'warning'); return; }
+  const g = grupoAtual(); if (!g) return;
+  const gestao = isGestaoUser();
+  const membros = g.membros.filter(m => gestao || lower(m.colaborador) === lower(userData.login));
+  const totalItens = membros.reduce((a, m) => a + (m.itens || []).length, 0);
+  if (totalItens === 0) { showToast('Não há despesas para exportar.', 'warning'); return; }
 
-  let total = 0;
+  let totalGeral = 0;
   const porCategoria = {};
-  const linhas = itens.map((item, i) => {
-    const valor = Number(String(item.valor || 0).replace(',', '.')) || 0;
-    total += valor;
-    const cat = item.categoria || 'Sem categoria';
-    porCategoria[cat] = (porCategoria[cat] || 0) + valor;
-    const hora = formatarHoraVisao(item.horaDespesa);
-    return `<tr><td class="c">${i + 1}</td><td>${escaparTextoHtml(formatarDataVisao(item.dataDespesa))}</td><td class="c">${escaparTextoHtml(hora || '—')}</td><td>${escaparTextoHtml(item.localDespesa || '—')}</td><td>${escaparTextoHtml(cat)}</td><td class="c up">${escaparTextoHtml(item.lojaDebito || '')}</td><td class="r">${formatarMoedaBR(valor)}</td></tr>`;
+  const blocos = membros.map(m => {
+    const itens = (m.itens || []).slice().sort((a, b) => chaveDataOrdenacao(a.dataDespesa) - chaveDataOrdenacao(b.dataDespesa));
+    let sub = 0;
+    const linhas = itens.map((item, i) => {
+      const valor = valorNum(item.valor); sub += valor; totalGeral += valor;
+      const cat = item.categoria || 'Sem categoria';
+      porCategoria[cat] = (porCategoria[cat] || 0) + valor;
+      const hora = formatarHoraVisao(item.horaDespesa);
+      return `<tr><td class="c">${i + 1}</td><td>${escaparTextoHtml(formatarDataVisao(item.dataDespesa))}</td><td class="c">${escaparTextoHtml(hora || '—')}</td><td>${escaparTextoHtml(item.localDespesa || '—')}</td><td>${escaparTextoHtml(cat)}</td><td class="c up">${escaparTextoHtml(item.lojaDebito || '')}</td><td class="r">${formatarMoedaBR(valor)}</td></tr>`;
+    }).join('') || '<tr><td colspan="7" class="c">Sem despesas lançadas.</td></tr>';
+    return `<div class="tec"><div class="tec-h"><b>${escaparTextoHtml(nomeTecnico(m.colaborador))}</b> <span>${escaparTextoHtml(m.colaborador)} • ${escaparTextoHtml(uiStatus(m.status).label)}</span></div>
+<table><thead><tr><th class="c" style="width:32px">#</th><th>Data</th><th class="c">Hora</th><th>Local</th><th>Categoria</th><th class="c">Loja Débito</th><th class="r">Valor</th></tr></thead><tbody>${linhas}</tbody>
+<tfoot><tr><td colspan="6" class="r">SUBTOTAL (${itens.length} despesa${itens.length === 1 ? '' : 's'})</td><td class="r">${formatarMoedaBR(sub)}</td></tr></tfoot></table></div>`;
   }).join('');
 
   const linhasResumo = Object.keys(porCategoria).sort().map(cat => `<tr><td>${escaparTextoHtml(cat)}</td><td class="r">${formatarMoedaBR(porCategoria[cat])}</td></tr>`).join('');
-
   const agora = new Date();
   const emitidoEm = `${agora.toLocaleDateString('pt-BR')} às ${pad2(agora.getHours())}:${pad2(agora.getMinutes())}`;
   const emitidoPor = `${userData.nome || ''} ${userData.sobrenome || ''}`.trim() || userData.login;
   const logoUrl = new URL('logo.png', window.location.href).href;
-  const nomeArquivo = `Relatorio_Despesas_${viagemAtual.sigla}_${agora.toISOString().slice(0, 10)}`;
+  const nomeArquivo = `Relatorio_Despesas_${g.sigla}_${agora.toISOString().slice(0, 10)}`;
+  const assinaturas = membros.map(m => `<div>${escaparTextoHtml(nomeTecnico(m.colaborador))}<br>Técnico responsável</div>`).join('') + '<div>Coordenação / Gerência</div>';
 
   const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>${escaparTextoHtml(nomeArquivo)}</title>
 <style>
@@ -1066,37 +1205,35 @@ th{background:#f1f5f9;color:#475569;font-size:9px;text-transform:uppercase;lette
 td{padding:8px;border:1px solid #e2e8f0;font-size:11.5px}
 tr{page-break-inside:avoid}
 .c{text-align:center}.r{text-align:right}.up{text-transform:uppercase;font-weight:bold}
-tfoot td{background:#ecfdf5;font-weight:bold;font-size:13px;color:#047857}
+tfoot td{background:#ecfdf5;font-weight:bold;font-size:12px;color:#047857}
+.tec{margin-bottom:18px;page-break-inside:auto}
+.tec-h{background:#1e293b;color:#fff;padding:8px 12px;border-radius:6px 6px 0 0;font-size:13px}
+.tec-h span{color:#94a3b8;font-size:10px;margin-left:8px}
 .resumo{width:55%}
-.assin{display:flex;gap:40px;margin-top:70px;page-break-inside:avoid}
-.assin div{flex:1;text-align:center;border-top:1px solid #334155;padding-top:6px;font-size:10px;color:#475569}
+.geral{margin-top:14px;background:#0f172a;color:#34d399;padding:12px 16px;border-radius:8px;display:flex;justify-content:space-between;font-size:15px;font-weight:bold}
+.geral span:first-child{color:#cbd5e1;font-size:11px;text-transform:uppercase;letter-spacing:.6px;align-self:center}
+.assin{display:flex;flex-wrap:wrap;gap:40px;margin-top:70px;page-break-inside:avoid}
+.assin div{flex:1;min-width:150px;text-align:center;border-top:1px solid #334155;padding-top:6px;font-size:10px;color:#475569}
 .rodape{margin-top:30px;text-align:center;font-size:9px;color:#94a3b8}
 </style></head><body>
 <div class="topo">
   <div class="marca"><img id="logoRel" src="${escaparTextoHtml(logoUrl)}" alt="TI Claudino"><div><h1>Relatório de Despesas de Viagem</h1><p>TI Claudino S/A</p></div></div>
   <div class="emissao">Emitido em<br><b>${escaparTextoHtml(emitidoEm)}</b><br>por ${escaparTextoHtml(emitidoPor)}</div>
 </div>
-
 <h2>Dados da Viagem</h2>
 <div class="info">
-  <div><span>Loja (Sigla)</span><b>${escaparTextoHtml(viagemAtual.sigla)}</b></div>
-  <div><span>Status</span><b>${escaparTextoHtml(viagemAtual.status)}</b></div>
-  <div class="full"><span>Motivo</span><b>${escaparTextoHtml(viagemAtual.motivo)}</b></div>
-  <div><span>Solicitado por</span><b>${escaparTextoHtml(viagemAtual.criadoPor)}</b></div>
-  <div><span>Técnico responsável</span><b>${escaparTextoHtml(viagemAtual.colaborador)}</b></div>
+  <div><span>Loja (Sigla)</span><b>${escaparTextoHtml(g.sigla)}</b></div>
+  <div><span>Situação</span><b>${escaparTextoHtml(uiStatus(g.statusAgg).label)}</b></div>
+  <div class="full"><span>Motivo</span><b>${escaparTextoHtml(g.motivo)}</b></div>
+  <div><span>Solicitado por</span><b>${escaparTextoHtml(g.criadoPor)}</b></div>
+  <div><span>Técnico(s)</span><b>${escaparTextoHtml(membros.map(m => nomeTecnico(m.colaborador)).join(', '))}</b></div>
 </div>
-
-<h2>Despesas (Ordem Cronológica)</h2>
-<table>
-  <thead><tr><th class="c" style="width:32px">#</th><th>Data</th><th class="c">Hora</th><th>Local</th><th>Categoria</th><th class="c">Loja Débito</th><th class="r">Valor</th></tr></thead>
-  <tbody>${linhas}</tbody>
-  <tfoot><tr><td colspan="6" class="r">TOTAL (${itens.length} despesa${itens.length > 1 ? 's' : ''})</td><td class="r">${formatarMoedaBR(total)}</td></tr></tfoot>
-</table>
-
+<h2>Despesas por Técnico (Ordem Cronológica)</h2>
+${blocos}
+<div class="geral"><span>Total geral (${totalItens} despesa${totalItens === 1 ? '' : 's'})</span><span>${formatarMoedaBR(totalGeral)}</span></div>
 <h2>Resumo por Categoria</h2>
 <table class="resumo"><thead><tr><th>Categoria</th><th class="r">Total</th></tr></thead><tbody>${linhasResumo}</tbody></table>
-
-<div class="assin"><div>Técnico responsável</div><div>Coordenação / Gerência</div></div>
+<div class="assin">${assinaturas}</div>
 <div class="rodape">Relatório gerado pelo Sistema de Despesas de Viagens | TI Claudino S/A</div>
 </body></html>`;
 
@@ -1113,41 +1250,73 @@ tfoot td{background:#ecfdf5;font-weight:bold;font-size:13px;color:#047857}
     catch (e) { showToast('Não foi possível gerar o relatório.', 'error'); }
     setTimeout(() => iframe.remove(), 3000);
   };
-  // espera a logo carregar antes de abrir a impressão (com limite de 2,5s)
   const logo = doc.getElementById('logoRel');
   if (logo && !logo.complete) { logo.onload = () => setTimeout(imprimir, 150); logo.onerror = () => setTimeout(imprimir, 150); setTimeout(imprimir, 2500); }
   else setTimeout(imprimir, 200);
   showToast('Relatório pronto! Na janela de impressão escolha "Salvar como PDF".', 'info');
 }
 
-// ==================== STATUS / EXCLUSÃO DA VIAGEM (com atualização imediata) ====================
-async function mudarStatusOtimista(novoStatus, msgOk) {
-  const anterior = viagemAtual.status;
-  viagemAtual.status = novoStatus; renderDetalhe(); renderViagensGrid();
+// ==================== STATUS / EXCLUSÃO (com atualização imediata) ====================
+async function aplicarStatus(ids, novoStatus) {
+  const anteriores = {};
+  ids.forEach(id => { const v = viagemPorId(id); if (v) { anteriores[id] = v.status; v.status = novoStatus; } });
+  renderTudo();
   busy++;
-  let r;
-  try { r = await fetchAPI({ action: 'updateDespesaStatus', idViagem: viagemAtual.idViagem, status: novoStatus, login: userData.login, nivel: userData.nivel }); } finally { busy--; }
-  if (r && r.success) { showToast(msgOk, 'success'); atualizarViagens(); }
-  else { viagemAtual.status = anterior; renderDetalhe(); renderViagensGrid(); showToast((r && r.message) || 'Erro.', 'error'); }
+  const falhas = [];
+  try {
+    for (const id of ids) {
+      const r = await postAPI({ action: 'updateDespesaStatus', idViagem: id, status: novoStatus, login: userData.login, nivel: userData.nivel });
+      if (!(r && r.success)) falhas.push(id);
+    }
+  } finally { busy--; }
+  falhas.forEach(id => { const v = viagemPorId(id); if (v) v.status = anteriores[id]; });
+  renderTudo();
+  return falhas.length;
 }
 
-async function enviarDespesasViagem() {
+async function alterarStatusViagem(idViagem, novoStatus) {
+  const falhas = await aplicarStatus([idViagem], novoStatus);
+  if (falhas) showToast('Não foi possível alterar o status.', 'error');
+  else { showToast(`Status: ${novoStatus}!`, 'success'); atualizarViagens(); }
+}
+
+async function alterarStatusGrupo(de, para) {
+  const g = grupoAtual(); if (!g) return;
+  const ids = g.membros.filter(m => m.status === de).map(m => m.idViagem);
+  if (!ids.length) return;
+  const msg = para === 'FECHADA' ? `Fechar ${ids.length} despesa(s) de técnicos desta viagem?` : `Arquivar ${ids.length} despesa(s) desta viagem?`;
+  if (!await showConfirm(msg, { type: 'info' })) return;
+  const falhas = await aplicarStatus(ids, para);
+  if (falhas) showToast(`${falhas} item(ns) não puderam ser atualizados.`, 'error');
+  else { showToast(`Status: ${para}!`, 'success'); atualizarViagens(); }
+}
+
+async function enviarDespesasViagem(idViagem) {
   if (!await showConfirm("Enviar despesas para aprovação?", { type: 'info' })) return;
-  mudarStatusOtimista('PENDENTE', 'Enviado!');
+  const falhas = await aplicarStatus([idViagem], 'PENDENTE');
+  if (falhas) showToast('Não foi possível enviar.', 'error');
+  else { showToast('Enviado!', 'success'); atualizarViagens(); }
 }
-
-async function alterarStatusViagem(novoStatus) { mudarStatusOtimista(novoStatus, `Status: ${novoStatus}!`); }
 
 async function excluirViagem() {
-  if (!await showConfirm("Excluir viagem permanentemente?", { type: 'danger' })) return;
-  const backup = viagensGlobais, alvo = viagemAtual;
-  viagensGlobais = viagensGlobais.filter(v => v.idViagem !== alvo.idViagem);
-  mostrarLista(); renderFiltrosSiglas(); renderViagensGrid();
+  const g = grupoAtual(); if (!g) return;
+  const qtd = g.membros.length;
+  if (!await showConfirm(qtd > 1 ? `Excluir esta viagem permanentemente, incluindo as despesas de ${qtd} técnicos?` : "Excluir viagem permanentemente?", { type: 'danger' })) return;
+  const ids = g.membros.map(m => m.idViagem);
+  const backup = viagensGlobais;
+  viagensGlobais = viagensGlobais.filter(v => !ids.includes(v.idViagem));
+  mostrarLista(); renderPainel();
   busy++;
-  let r;
-  try { r = await fetchAPI({ action: 'deleteDespesaViagem', idViagem: alvo.idViagem, login: userData.login, nivel: userData.nivel }); } finally { busy--; }
-  if (r && r.success) { showToast('Viagem excluída.', 'success'); atualizarViagens(); }
-  else { viagensGlobais = backup; renderFiltrosSiglas(); renderViagensGrid(); showToast((r && r.message) || 'Erro.', 'error'); }
+  const falhas = [];
+  try {
+    for (const id of ids) {
+      const r = await postAPI({ action: 'deleteDespesaViagem', idViagem: id, login: userData.login, nivel: userData.nivel });
+      if (!(r && r.success)) falhas.push(id);
+    }
+  } finally { busy--; }
+  if (falhas.length) { viagensGlobais = backup; renderPainel(); showToast('Alguns itens não puderam ser excluídos.', 'error'); }
+  else showToast('Viagem excluída.', 'success');
+  atualizarViagens();
 }
 
 function voltarDashboard() { recarregarDashboard(); }
