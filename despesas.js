@@ -10,6 +10,8 @@ let visualizadorIdAtual = null;
 const cacheImagens = {};
 let pollTimer = null, polling = false, pollPromise = null, jaCarregou = false, lastSig = '', busy = 0;
 let tecnicos = [], tecnicosSel = new Set(), nomesUsuarios = {}, usuariosPromise = null;
+// Travas de clique único (evitam envio duplicado)
+let salvandoNota = false, salvandoEdicao = false, enviandoDespesas = false;
 
 const $ = (id) => document.getElementById(id);
 const RX_GESTAO = /Coordena|Ger[eê]ncia/i;
@@ -463,6 +465,7 @@ garantirCamposLocal();
 // ============================================================
 const ST_ARQ = ['FECHADA', 'ARQUIVADA', 'CANCELADO'];
 const ST_ATIVOS_ORDEM = ['PENDENTE', 'SOLICITAR CORRECAO', 'ABERTO'];
+const ST_FECHAVEIS = ['PENDENTE', 'ABERTO', 'SOLICITAR CORRECAO']; // a Coordenação/Gerência pode fechar direto
 const STATUS_UI = {
   'PENDENTE': { label: 'Aguardando aprovação', curto: 'Pendente', badge: 'bg-amber-100 text-amber-700 border-amber-200', bar: 'border-l-amber-500', dot: 'bg-amber-500', icon: 'fa-hourglass-half', txt: 'text-amber-600' },
   'SOLICITAR CORRECAO': { label: 'Correção solicitada', curto: 'Correção', badge: 'bg-red-100 text-red-700 border-red-200', bar: 'border-l-red-500', dot: 'bg-red-500', icon: 'fa-rotate-left', txt: 'text-red-600' },
@@ -516,6 +519,7 @@ function acharItem(idComp) {
   for (const v of viagensGlobais) { const it = (v.itens || []).find(c => c.idComprovante === idComp); if (it) return { item: it, membro: v }; }
   return null;
 }
+function viagemEditavel(v) { return !!v && (v.status === 'ABERTO' || v.status === 'SOLICITAR CORRECAO'); }
 
 // ==================== SESSÃO ====================
 window.onload = () => {
@@ -728,7 +732,7 @@ function renderPainel() {
     const on = abaAtiva === id;
     return `<button onclick="setAba('${id}')" class="px-4 py-2.5 text-sm font-bold -mb-px border-b-2 transition ${on ? 'border-emerald-600 text-emerald-700' : 'border-transparent text-slate-500 hover:text-slate-800'}"><i class="fa-solid ${icon} mr-2"></i>${txt} <span class="ml-1 text-[10px] px-2 py-0.5 rounded-full ${on ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}">${n}</span></button>`;
   };
-  $('abasViagens').innerHTML = aba('ATIVAS', 'fa-layer-group', 'Ativas', ativas.length) + aba('ARQUIVADAS', 'fa-box-archive', 'Arquivadas', arq.length);
+  $('abasViagens').innerHTML = aba('ATIVAS', 'fa-layer-group', 'Ativas', ativas.length) + aba('ARQUIVADAS', 'fa-box-archive', 'Fechadas / Arquivadas', arq.length);
 
   // resumo (filtros por status) - só nas ativas
   const boxResumo = $('painelResumo');
@@ -768,7 +772,7 @@ function renderPainel() {
     });
     grid.innerHTML = html;
   } else {
-    if (!lista.length) { grid.innerHTML = `<div class="text-center py-10 bg-white border border-dashed rounded text-slate-400"><i class="fa-solid fa-box-archive text-3xl mb-2"></i><br>Nenhuma viagem arquivada.</div>`; return; }
+    if (!lista.length) { grid.innerHTML = `<div class="text-center py-10 bg-white border border-dashed rounded text-slate-400"><i class="fa-solid fa-box-archive text-3xl mb-2"></i><br>Nenhuma viagem fechada ou arquivada.</div>`; return; }
     lista.sort((a, b) => String(a.sigla).localeCompare(String(b.sigla)));
     grid.innerHTML = `<section><div class="flex items-center gap-2 mb-3"><i class="fa-solid fa-box-archive text-slate-500"></i><h3 class="text-sm font-black uppercase tracking-wider text-slate-700">Viagens fechadas e arquivadas</h3><div class="flex-1 border-t border-slate-200 ml-2"></div></div><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">${lista.map(cardGrupo).join('')}</div></section>`;
   }
@@ -901,10 +905,13 @@ function renderAcoesGrupo(g) {
   const gestao = isGestaoUser();
   let esq = '', dir = '';
   if (gestao) {
-    const nPend = g.membros.filter(m => m.status === 'PENDENTE').length;
+    const nFechar = g.membros.filter(m => ST_FECHAVEIS.includes(m.status)).length;
     const nFech = g.membros.filter(m => m.status === 'FECHADA').length;
-    if (nPend > 0) esq += `<button onclick="alterarStatusGrupo('PENDENTE','FECHADA')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-check-double mr-2"></i> Fechar ${nPend > 1 ? 'todos os pendentes (' + nPend + ')' : 'pendente'}</button>`;
+    const nArq = g.membros.filter(m => m.status === 'ARQUIVADA').length;
+    if (nFechar > 0) esq += `<button onclick="alterarStatusGrupo('PENDENTE,ABERTO,SOLICITAR CORRECAO','FECHADA')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-check-double mr-2"></i> Fechar ${nFechar > 1 ? 'todas (' + nFechar + ')' : 'despesa'}</button>`;
+    if (nFech > 0) esq += `<button onclick="alterarStatusGrupo('FECHADA','ABERTO')" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-lock-open mr-2"></i> Reabrir ${nFech > 1 ? 'fechadas (' + nFech + ')' : 'fechada'}</button>`;
     if (nFech > 0) esq += `<button onclick="alterarStatusGrupo('FECHADA','ARQUIVADA')" class="bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-box-archive mr-2"></i> Arquivar ${nFech > 1 ? 'fechadas (' + nFech + ')' : 'fechada'}</button>`;
+    if (nArq > 0) esq += `<button onclick="alterarStatusGrupo('ARQUIVADA','FECHADA')" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-box-open mr-2"></i> Desarquivar ${nArq > 1 ? '(' + nArq + ')' : ''}</button>`;
     dir += `<button onclick="excluirViagem()" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-trash mr-2"></i> Excluir viagem</button>`;
   }
   const podeExportar = gestao || g.membros.some(m => lower(m.colaborador) === lower(userData.login));
@@ -916,6 +923,7 @@ function linhaItemHtml(item, isColab, emEdicao, podeVer) {
   const vn = valorNum(item.valor);
   let btnAcao = '';
   if (isColab && emEdicao) btnAcao = `<div class="flex gap-3 justify-center"><button onclick="editarComprovanteViagem('${item.idComprovante}')" class="text-amber-600 hover:text-amber-800" title="Editar"><i class="fa-solid fa-pen"></i></button><button onclick="excluirDespesaViagem('${item.idComprovante}')" class="text-red-500 hover:text-red-700" title="Excluir"><i class="fa-solid fa-trash"></i></button></div>`;
+  else if (isColab) btnAcao = '<span class="text-slate-300" title="Despesa bloqueada para alterações"><i class="fa-solid fa-lock"></i></span>';
   let cel = '<td class="px-4 py-3 text-xs text-center text-slate-300">—</td>';
   if (podeVer) {
     if (item.urlComprovante) {
@@ -933,7 +941,7 @@ function linhaItemHtml(item, isColab, emEdicao, podeVer) {
 function htmlMembro(m) {
   const gestao = isGestaoUser();
   const isColab = lower(m.colaborador) === lower(userData.login);
-  const emEdicao = (m.status === 'ABERTO' || m.status === 'SOLICITAR CORRECAO');
+  const emEdicao = viagemEditavel(m);
   const podeVer = gestao || isColab;
   const u = uiStatus(m.status);
   const itens = (m.itens || []).slice().sort((a, b) => chaveDataOrdenacao(a.dataDespesa) - chaveDataOrdenacao(b.dataDespesa));
@@ -946,11 +954,12 @@ function htmlMembro(m) {
     if (itens.length > 0) btns += `<button onclick="enviarDespesasViagem('${m.idViagem}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-4 rounded shadow"><i class="fa-solid fa-paper-plane mr-2"></i> Enviar Despesas</button>`;
   }
   if (gestao) {
-    if (m.status === 'PENDENTE') {
-      btns += `<button onclick="alterarStatusViagem('${m.idViagem}','FECHADA')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-1.5 px-3 rounded shadow"><i class="fa-solid fa-check mr-1"></i> Fechar</button>`;
-      btns += `<button onclick="alterarStatusViagem('${m.idViagem}','SOLICITAR CORRECAO')" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold py-1.5 px-3 rounded shadow"><i class="fa-solid fa-arrow-rotate-left mr-1"></i> Solicitar Correção</button>`;
-    }
-    if (m.status === 'FECHADA') btns += `<button onclick="alterarStatusViagem('${m.idViagem}','ARQUIVADA')" class="bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold py-1.5 px-3 rounded shadow"><i class="fa-solid fa-box-archive mr-1"></i> Arquivar</button>`;
+    const b = (cls, st, ico, txt) => `<button onclick="alterarStatusViagem('${m.idViagem}','${st}')" class="${cls} text-white text-xs font-bold py-1.5 px-3 rounded shadow"><i class="fa-solid ${ico} mr-1"></i> ${txt}</button>`;
+    if (ST_FECHAVEIS.includes(m.status)) btns += b('bg-emerald-600 hover:bg-emerald-700', 'FECHADA', 'fa-check', 'Fechar');
+    if (m.status === 'PENDENTE') btns += b('bg-amber-500 hover:bg-amber-600', 'SOLICITAR CORRECAO', 'fa-arrow-rotate-left', 'Solicitar Correção');
+    if (m.status === 'FECHADA') btns += b('bg-amber-500 hover:bg-amber-600', 'ABERTO', 'fa-lock-open', 'Reabrir') + b('bg-slate-700 hover:bg-slate-800', 'ARQUIVADA', 'fa-box-archive', 'Arquivar');
+    if (m.status === 'ARQUIVADA') btns += b('bg-blue-600 hover:bg-blue-700', 'FECHADA', 'fa-box-open', 'Desarquivar');
+    btns += `<button onclick="excluirDespesaMembro('${m.idViagem}')" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-1.5 px-3 rounded shadow"><i class="fa-solid fa-trash mr-1"></i> Excluir</button>`;
   }
 
   const corpo = itens.length
@@ -985,6 +994,7 @@ function renderMembros(g) {
 // ==================== EDITAR / EXCLUIR DESPESA ====================
 function editarComprovanteViagem(idComp) {
   const f = acharItem(idComp); if (!f) return;
+  if (!viagemEditavel(f.membro)) { showToast('Esta despesa não está aberta para alterações.', 'warning', 'Bloqueado'); return; }
   const item = f.item;
   document.getElementById('editIdComprovante').value = idComp;
   document.getElementById('editData').value = formatarDataVisao(item.dataDespesa) || '';
@@ -1002,37 +1012,58 @@ function editarComprovanteViagem(idComp) {
   document.getElementById('modalEditarComprovante').classList.remove('hidden');
 }
 
+// Trava/destrava todos os controles de um modal enquanto uma ação está em andamento
+function travarModal(idModal, travar) {
+  const modal = document.getElementById(idModal); if (!modal) return;
+  modal.querySelectorAll('button, input, select').forEach(el => {
+    el.disabled = travar;
+    el.classList.toggle('opacity-60', travar);
+    el.classList.toggle('cursor-not-allowed', travar);
+  });
+}
+
 async function salvarEdicaoComprovante() {
+  if (salvandoEdicao) return;                       // clique único
   const idComp = document.getElementById('editIdComprovante').value;
   const valorRaw = document.getElementById('editValor').value;
   const loja = document.getElementById('editLoja').value.trim();
   const categoria = document.getElementById('editCategoria').value;
   if (!valorRaw || !loja || !categoria) { showToast('Preencha valor, loja e categoria.', 'warning'); return; }
+  const f0 = acharItem(idComp);
+  if (f0 && !viagemEditavel(f0.membro)) { showToast('Esta despesa não está aberta para alterações.', 'warning', 'Bloqueado'); return; }
 
-  const fileInput = document.getElementById('editFileOCR');
-  let novaImagem = null, novoMime = null;
-  if (fileInput.files && fileInput.files[0]) {
-    novaImagem = await converterFileParaBase64(fileInput.files[0]);
-    const matchMime = String(novaImagem).match(/^data:([^;]+);base64,/);
-    novoMime = matchMime ? matchMime[1] : (fileInput.files[0].type || 'image/jpeg');
-  }
-
-  const data = { action: 'updateComprovante', idComprovante: idComp, login: userData.login, dataDespesa: document.getElementById('editData').value.trim(), horaDespesa: document.getElementById('editHora').value.trim(), valor: parseFloat(String(valorRaw).replace(',', '.')), lojaDebito: loja, categoria, localDespesa: document.getElementById('editLocal').value.trim() };
-  if (novaImagem) { data.imagemBase64 = novaImagem; data.mimeType = novoMime; }
-
+  salvandoEdicao = true;                            // trava ANTES de qualquer await
+  const btn = document.getElementById('btnSalvarEdicao'); const original = btn.innerHTML;
+  travarModal('modalEditarComprovante', true);
+  btn.innerHTML = '<span class="loader-small"></span> Processando...';
   busy++;
-  let r;
-  try { r = await fetchAPI(data, 'btnSalvarEdicao'); } finally { busy--; }
-  if (r && r.success) {
-    delete cacheImagens[idComp]; document.getElementById('modalEditarComprovante').classList.add('hidden'); showToast('Despesa atualizada!', 'success');
-    const f = acharItem(idComp);
-    if (f) { Object.assign(f.item, { dataDespesa: data.dataDespesa, horaDespesa: data.horaDespesa, valor: data.valor, lojaDebito: data.lojaDebito, categoria: data.categoria, localDespesa: data.localDespesa }); renderTudo(); }
-    atualizarViagens();
+  try {
+    const fileInput = document.getElementById('editFileOCR');
+    let novaImagem = null, novoMime = null;
+    if (fileInput.files && fileInput.files[0]) {
+      novaImagem = await converterFileParaBase64(fileInput.files[0]);
+      const matchMime = String(novaImagem).match(/^data:([^;]+);base64,/);
+      novoMime = matchMime ? matchMime[1] : (fileInput.files[0].type || 'image/jpeg');
+    }
+    const data = { action: 'updateComprovante', idComprovante: idComp, login: userData.login, dataDespesa: document.getElementById('editData').value.trim(), horaDespesa: document.getElementById('editHora').value.trim(), valor: parseFloat(String(valorRaw).replace(',', '.')), lojaDebito: loja, categoria, localDespesa: document.getElementById('editLocal').value.trim() };
+    if (novaImagem) { data.imagemBase64 = novaImagem; data.mimeType = novoMime; }
+    const r = await fetchAPI(data);
+    if (r && r.success) {
+      delete cacheImagens[idComp]; document.getElementById('modalEditarComprovante').classList.add('hidden'); showToast('Despesa atualizada!', 'success');
+      const f = acharItem(idComp);
+      if (f) { Object.assign(f.item, { dataDespesa: data.dataDespesa, horaDespesa: data.horaDespesa, valor: data.valor, lojaDebito: data.lojaDebito, categoria: data.categoria, localDespesa: data.localDespesa }); renderTudo(); }
+    } else { showToast((r && r.message) || 'Erro ao atualizar.', 'error'); }
+  } finally {
+    busy--; salvandoEdicao = false;
+    travarModal('modalEditarComprovante', false);
+    btn.innerHTML = original;
   }
-  else { showToast(r.message || 'Erro ao atualizar.', 'error'); }
+  atualizarViagens();
 }
 
 async function excluirDespesaViagem(idComp) {
+  const f0 = acharItem(idComp);
+  if (f0 && !viagemEditavel(f0.membro)) { showToast('Esta despesa não está aberta para alterações.', 'warning', 'Bloqueado'); return; }
   if (!await showConfirm("Excluir esta despesa e a foto permanentemente?", { type: 'danger', icon: 'fa-trash' })) return;
   const f = acharItem(idComp); if (!f) return;
   const membro = f.membro, backup = membro.itens.slice();
@@ -1042,13 +1073,17 @@ async function excluirDespesaViagem(idComp) {
   let r;
   try { r = await fetchAPI({ action: 'deleteComprovante', idComprovante: idComp, login: userData.login }); } finally { busy--; }
   if (r && r.success) { delete cacheImagens[idComp]; showToast('Despesa excluída.', 'success'); atualizarViagens(); }
-  else { membro.itens = backup; renderTudo(); showToast((r && r.message) || 'Erro ao excluir.', 'error'); }
+  else { membro.itens = backup; renderTudo(); showToast((r && r.message) || 'Erro ao excluir.', 'error'); lastSig = ''; atualizarViagens(); }
 }
 
 // ==================== OCR MODAL ====================
 function abrirModalOCR(idViagem) {
+  if (salvandoNota) return;
   if (!idViagem || !viagemPorId(idViagem)) { showToast('Abra uma viagem para enviar notas.', 'warning'); return; }
+  if (!viagemEditavel(viagemPorId(idViagem))) { showToast('Esta despesa não está aberta para novos lançamentos.', 'warning', 'Bloqueado'); return; }
   ocrIdViagem = idViagem;
+  travarModal('modalOCR', false);
+  mostrarStatusOCR('');
   document.getElementById('modalOCR').classList.remove('hidden'); document.getElementById('ocrForm').classList.add('hidden'); document.getElementById('btnSalvarNota').classList.add('hidden'); document.getElementById('fileOCR').value = "";
   document.getElementById('ocrData').value = ''; document.getElementById('ocrHora').value = ''; document.getElementById('ocrValor').value = ''; document.getElementById('ocrLoja').value = ''; document.getElementById('ocrCategoria').value = ''; document.getElementById('ocrLocal').value = '';
   ocrImagemBase64 = ''; ocrMimeType = 'image/jpeg'; ocrTextoExtraido = '';
@@ -1056,7 +1091,23 @@ function abrirModalOCR(idViagem) {
   if (previewContainer) previewContainer.classList.add('hidden'); if (preview) preview.src = '';
 }
 
+// Faixa de status dentro do modal ("processando", etc.). Texto vazio = esconde.
+function mostrarStatusOCR(texto) {
+  let el = document.getElementById('ocrStatus');
+  if (!el) {
+    const wrap = document.getElementById('btnSalvarNota').parentElement;
+    el = document.createElement('div');
+    el.id = 'ocrStatus';
+    el.className = 'hidden mt-4 text-center text-sm font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded p-3';
+    wrap.parentNode.insertBefore(el, wrap);
+  }
+  if (!texto) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  el.classList.remove('hidden');
+  el.innerHTML = `<span class="loader" style="width:16px;height:16px;border-width:2px;margin-right:8px"></span>${texto}`;
+}
+
 async function processarOCR(event) {
+  if (salvandoNota) return;
   const file = event.target.files[0]; if (!file) return;
   ocrTextoExtraido = '';
   document.getElementById('ocrData').value = ''; document.getElementById('ocrHora').value = ''; document.getElementById('ocrValor').value = ''; document.getElementById('ocrLoja').value = ''; document.getElementById('ocrCategoria').value = ''; document.getElementById('ocrLocal').value = '';
@@ -1099,8 +1150,12 @@ async function processarOCR(event) {
   }
 }
 
+// CLIQUE ÚNICO: a trava é ativada antes de qualquer await, o modal inteiro fica bloqueado
+// e o botão mostra "Processando..." até a conclusão de TODO o processo (salvar + vincular).
 async function salvarNotaNaViagem() {
+  if (salvandoNota) return;
   if (!ocrIdViagem || !viagemPorId(ocrIdViagem)) { showToast('Abra uma viagem para enviar a nota.', 'warning'); return; }
+  if (!viagemEditavel(viagemPorId(ocrIdViagem))) { showToast('Esta despesa não está aberta para novos lançamentos.', 'warning', 'Bloqueado'); return; }
   const valorRaw = document.getElementById('ocrValor').value;
   const loja = document.getElementById('ocrLoja').value.trim();
   const categoria = document.getElementById('ocrCategoria').value;
@@ -1114,16 +1169,28 @@ async function salvarNotaNaViagem() {
 
   const idViagem = ocrIdViagem;
   const data = { action: 'saveComprovante', login: userData.login, idViagem, dataDespesa, horaDespesa: document.getElementById('ocrHora').value.trim(), valor: parseFloat(String(valorRaw).replace(',', '.')), lojaDebito: loja, categoria, localDespesa: document.getElementById('ocrLocal').value.trim(), ocrConteudo: String(ocrTextoExtraido || '').slice(0, 5000), imagemBase64: ocrImagemBase64, mimeType: ocrMimeType };
+
+  salvandoNota = true;                              // ← trava (síncrona, antes do primeiro await)
+  const btn = document.getElementById('btnSalvarNota'); const original = btn.innerHTML;
+  travarModal('modalOCR', true);
+  btn.innerHTML = '<span class="loader-small"></span> Processando...';
+  mostrarStatusOCR('Sua despesa está sendo processada. Aguarde, não feche esta janela...');
   busy++;
   let r, vinculou = false;
   try {
-    r = await fetchAPI(data, 'btnSalvarNota');
+    r = await fetchAPI(data);                       // sem btnId: o botão só volta ao normal no finally
     if (!(r && r.success)) { showToast((r && r.message) || 'Falha ao salvar.', 'error'); return; }
+    mostrarStatusOCR('Foto e dados salvos. Vinculando à viagem...');
     vinculou = await vincularNotaNaViagem(idViagem, r);
-  } finally { busy--; }
+  } finally {
+    busy--; salvandoNota = false;
+    travarModal('modalOCR', false);
+    mostrarStatusOCR('');
+    btn.innerHTML = original;
+  }
   document.getElementById('modalOCR').classList.add('hidden');
-  if (!vinculou) showToast('Nota salva, mas não consegui vinculá-la à viagem. Verifique o Apps Script.', 'warning');
-  else if (r.urlComprovante) showToast('Despesa e foto salvas na viagem!', 'success');
+  if (!vinculou) showToast('Nota salva, mas não consegui vinculá-la à viagem. Verifique se a despesa ainda está aberta.', 'warning');
+  else if (r.urlComprovante) showToast('Despesa e foto salvas na viagem!', 'success', 'Concluído');
   else showToast('Despesa salva, mas a foto não foi para o Drive. Verifique as permissões do Apps Script.', 'warning');
   ocrImagemBase64 = ''; ocrMimeType = 'image/jpeg'; ocrTextoExtraido = ''; ocrIdViagem = null;
   atualizarViagens();
@@ -1274,30 +1341,67 @@ async function aplicarStatus(ids, novoStatus) {
   return falhas.length;
 }
 
+const NOME_STATUS_ACAO = { FECHADA: 'fechada', ABERTO: 'reaberta', ARQUIVADA: 'arquivada', 'SOLICITAR CORRECAO': 'devolvida para correção', PENDENTE: 'enviada' };
+
 async function alterarStatusViagem(idViagem, novoStatus) {
+  // reabrir libera o técnico para editar: pede confirmação
+  if (novoStatus === 'ABERTO') {
+    if (!await showConfirm('Reabrir esta despesa? O técnico poderá editar e enviar novamente.', { type: 'info', icon: 'fa-lock-open' })) return;
+  }
   const falhas = await aplicarStatus([idViagem], novoStatus);
-  if (falhas) showToast('Não foi possível alterar o status.', 'error');
-  else { showToast(`Status: ${novoStatus}!`, 'success'); atualizarViagens(); }
+  if (falhas) { showToast('Não foi possível alterar o status.', 'error'); lastSig = ''; atualizarViagens(); }
+  else { showToast(`Despesa ${NOME_STATUS_ACAO[novoStatus] || novoStatus}!`, 'success'); atualizarViagens(); }
 }
 
-async function alterarStatusGrupo(de, para) {
+function textoConfirmaStatus(de, para, n) {
+  const s = n === 1 ? 'a despesa' : `as ${n} despesas`;
+  if (para === 'FECHADA' && de.includes('ARQUIVADA')) return `Desarquivar ${s}? Voltam para "Fechada" (você pode reabrir depois).`;
+  if (para === 'FECHADA') return `Fechar ${s} desta viagem? O técnico não poderá mais alterar.`;
+  if (para === 'ABERTO') return `Reabrir ${s}? O técnico poderá editar e enviar novamente.`;
+  if (para === 'ARQUIVADA') return `Arquivar ${s} desta viagem?`;
+  return `Alterar o status d${s} para ${para}?`;
+}
+
+// 'deCsv' = status de origem separados por vírgula; altera todos os técnicos do grupo que estiverem neles
+async function alterarStatusGrupo(deCsv, para) {
   const g = grupoAtual(); if (!g) return;
-  const ids = g.membros.filter(m => m.status === de).map(m => m.idViagem);
+  const de = String(deCsv).split(',');
+  const ids = g.membros.filter(m => de.includes(m.status)).map(m => m.idViagem);
   if (!ids.length) return;
-  const msg = para === 'FECHADA' ? `Fechar ${ids.length} despesa(s) de técnicos desta viagem?` : `Arquivar ${ids.length} despesa(s) desta viagem?`;
-  if (!await showConfirm(msg, { type: 'info' })) return;
+  if (!await showConfirm(textoConfirmaStatus(de, para, ids.length), { type: 'info' })) return;
   const falhas = await aplicarStatus(ids, para);
-  if (falhas) showToast(`${falhas} item(ns) não puderam ser atualizados.`, 'error');
-  else { showToast(`Status: ${para}!`, 'success'); atualizarViagens(); }
+  if (falhas) { showToast(`${falhas} item(ns) não puderam ser atualizados.`, 'error'); lastSig = ''; atualizarViagens(); }
+  else { showToast(`Despesa(s) ${NOME_STATUS_ACAO[para] || para}!`, 'success'); atualizarViagens(); }
 }
 
 async function enviarDespesasViagem(idViagem) {
-  if (!await showConfirm("Enviar despesas para aprovação?", { type: 'info' })) return;
-  const falhas = await aplicarStatus([idViagem], 'PENDENTE');
-  if (falhas) showToast('Não foi possível enviar.', 'error');
-  else { showToast('Enviado!', 'success'); atualizarViagens(); }
+  if (enviandoDespesas) return;                      // clique único
+  enviandoDespesas = true;
+  try {
+    if (!await showConfirm("Enviar despesas para aprovação?", { type: 'info' })) return;
+    const falhas = await aplicarStatus([idViagem], 'PENDENTE');
+    if (falhas) showToast('Não foi possível enviar.', 'error');
+    else { showToast('Enviado!', 'success'); atualizarViagens(); }
+  } finally { enviandoDespesas = false; }
 }
 
+// Exclui a viagem (despesa) de UM técnico
+async function excluirDespesaMembro(idViagem) {
+  const v = viagemPorId(idViagem); if (!v) return;
+  if (!await showConfirm(`Excluir a despesa de <b>${escaparTextoHtml(nomeTecnico(v.colaborador))}</b> (${escaparTextoHtml(v.sigla)})? Esta ação não pode ser desfeita.`, { type: 'danger', icon: 'fa-trash' })) return;
+  const backup = viagensGlobais;
+  viagensGlobais = viagensGlobais.filter(x => x.idViagem !== idViagem);
+  if (grupoAtualKey && !grupoAtual()) mostrarLista();
+  renderTudo();
+  busy++;
+  let r;
+  try { r = await postAPI({ action: 'deleteDespesaViagem', idViagem, login: userData.login, nivel: userData.nivel }); } finally { busy--; }
+  if (r && r.success) showToast('Despesa excluída.', 'success');
+  else { viagensGlobais = backup; renderTudo(); showToast((r && r.message) || 'Não foi possível excluir.', 'error'); }
+  lastSig = ''; atualizarViagens();
+}
+
+// Exclui a viagem inteira (todos os técnicos do grupo)
 async function excluirViagem() {
   const g = grupoAtual(); if (!g) return;
   const qtd = g.membros.length;
@@ -1316,7 +1420,7 @@ async function excluirViagem() {
   } finally { busy--; }
   if (falhas.length) { viagensGlobais = backup; renderPainel(); showToast('Alguns itens não puderam ser excluídos.', 'error'); }
   else showToast('Viagem excluída.', 'success');
-  atualizarViagens();
+  lastSig = ''; atualizarViagens();
 }
 
 function voltarDashboard() { recarregarDashboard(); }
