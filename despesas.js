@@ -43,6 +43,18 @@ function irParaViagens() {
   window.location.href = VIAGENS_URL + '#sso=' + payload;
 }
 
+function irParaDashboard() {
+  if (!userData || !isGestaoUser()) return;
+  window.location.href = 'dashboard.html';
+}
+
+function atualizarBotoesHeader() {
+  const gestao = isGestaoUser();
+  const bV = $('btnViagens'), bD = $('btnDashboard');
+  if (bV) bV.classList.toggle('hidden', gestao);   // Viagens: todos, menos Coordenação/Gerência
+  if (bD) bD.classList.toggle('hidden', !gestao);  // Dashboard: só Coordenação/Gerência
+}
+
 function formatarDataVisao(valor) {
   const s = String(valor || '');
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) { const p = s.slice(0, 10).split('-'); return `${p[2]}/${p[1]}/${p[0]}`; }
