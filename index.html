@@ -78,7 +78,8 @@
             </div>
             <div class="flex items-center gap-4">
                 <span class="hidden sm:flex items-center gap-1 text-[10px] font-bold text-emerald-400 uppercase" title="Os dados são atualizados automaticamente"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Ao vivo</span>
-                <button onclick="irParaViagens()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded transition" title="Abrir o sistema de Gestão de Viagens (horas)"><i class="fa-solid fa-clock mr-1"></i> Viagens</button>
+                <button id="btnViagens" onclick="irParaViagens()" class="hidden bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded transition" title="Abrir o sistema de Gestão de Viagens (horas)"><i class="fa-solid fa-clock mr-1"></i> Viagens</button> 
+                <button id="btnDashboard" onclick="irParaDashboard()" class="hidden bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded transition" title="Abrir o Dashboard (Coordenação/Gerência)"><i class="fa-solid fa-chart-line mr-1"></i> Dashboard</button>
                 <div class="text-right hidden md:block"><p class="text-sm font-medium text-white" id="navUserName"></p><p class="text-xs text-emerald-400 font-bold" id="navUserRole"></p></div>
                 <button onclick="logout()" class="text-slate-400 hover:text-red-400 font-semibold text-sm"><i class="fa-solid fa-power-off mr-1"></i> Sair</button>
             </div>
