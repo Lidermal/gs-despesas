@@ -615,6 +615,7 @@ function iniciarSistema() {
   document.getElementById('authView').classList.add('hidden'); document.getElementById('globalHeader').classList.remove('hidden'); document.getElementById('mainContent').classList.remove('hidden');
   document.getElementById('navUserName').textContent = `${userData.nome} ${userData.sobrenome}`; document.getElementById('navUserRole').textContent = `${userData.nivel}`;
   jaCarregou = false; lastSig = ''; viagensGlobais = []; abaAtiva = 'ATIVAS'; filtroStatus = 'TODOS'; filtroLojaSelecionada = 'TODAS';
+  atualizarBotoesHeader();
   carregarUsuarios();
   recarregarDashboard();
   iniciarPolling();
