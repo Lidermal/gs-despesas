@@ -1,261 +1,335 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistema de Despesas de Viagens | TI Claudino S/A</title>
-    <link rel="icon" type="image/png" href="logo.png">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="style.css">
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-    <style>
-        #toastContainer { position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:10px;width:calc(100% - 32px);max-width:360px;pointer-events:none; }
-        .toast { pointer-events:auto;position:relative;display:flex;align-items:flex-start;gap:12px;padding:14px 16px 16px;border-radius:12px;background:#fff;color:#1e293b;border:1px solid #e2e8f0;border-left:5px solid #64748b;box-shadow:0 10px 25px -5px rgba(15,23,42,.25);overflow:hidden;animation:toastSlideIn .32s cubic-bezier(.21,1.02,.73,1);font-family:inherit; }
-        .toast.hiding { animation:toastSlideOut .28s ease-in forwards; }
-        .toast-icon { font-size:18px;line-height:1;margin-top:1px;flex-shrink:0;color:#64748b; }
-        .toast-content { flex:1;min-width:0; }
-        .toast-title { font-weight:800;font-size:13px;margin-bottom:2px;color:#0f172a; }
-        .toast-message { font-size:12px;line-height:1.45;color:#475569;word-wrap:break-word; }
-        .toast-close { flex-shrink:0;background:transparent;border:none;cursor:pointer;color:#94a3b8;font-size:13px;padding:4px;margin:-2px -4px 0 0;border-radius:8px; }
-        .toast-close:hover { background:#f1f5f9;color:#334155; }
-        .toast-progress { position:absolute;left:0;bottom:0;height:3px;width:100%;transform-origin:left center;background:#94a3b8;opacity:.35;animation-name:toastProgress;animation-timing-function:linear;animation-fill-mode:forwards; }
-        .toast-success { border-left-color:#059669; } .toast-success .toast-icon { color:#059669; } .toast-success .toast-title { color:#047857; } .toast-success .toast-progress { background:#059669; }
-        .toast-error { border-left-color:#dc2626; } .toast-error .toast-icon { color:#dc2626; } .toast-error .toast-title { color:#b91c1c; } .toast-error .toast-progress { background:#dc2626; }
-        .toast-warning { border-left-color:#d97706; } .toast-warning .toast-icon { color:#d97706; } .toast-warning .toast-title { color:#b45309; } .toast-warning .toast-progress { background:#d97706; }
-        .toast-info { border-left-color:#2563eb; } .toast-info .toast-icon { color:#2563eb; } .toast-info .toast-title { color:#1d4ed8; } .toast-info .toast-progress { background:#2563eb; }
-        @keyframes toastSlideIn { from{transform:translateX(120%);opacity:0;} to{transform:translateX(0);opacity:1;} }
-        @keyframes toastSlideOut { from{transform:translateX(0);opacity:1;} to{transform:translateX(120%);opacity:0;} }
-        @keyframes toastProgress { from{transform:scaleX(1);} to{transform:scaleX(0);} }
-        @keyframes fadeIn { from{opacity:0;} to{opacity:1;} }
-        @keyframes fadeOut { from{opacity:1;} to{opacity:0;} }
-        @keyframes slideUp { from{transform:translateY(20px);opacity:0;} to{transform:translateY(0);opacity:1;} }
-        @media (max-width:480px) { #toastContainer { top:12px;left:12px;right:12px;width:auto;max-width:none; } .toast { animation-name:toastSlideInMobile; } .toast.hiding { animation-name:toastSlideOutMobile; } }
-        @keyframes toastSlideInMobile { from{transform:translateY(-120%);opacity:0;} to{transform:translateY(0);opacity:1;} }
-        @keyframes toastSlideOutMobile { from{transform:translateY(0);opacity:1;} to{transform:translateY(-120%);opacity:0;} }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard de Viagens | Suporte</title>
+<link rel="icon" type="image/png" href="logo.png">
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<style>
+button:focus,input:focus,select:focus{outline:none!important;box-shadow:none!important}
+.fade-in{animation:fi .4s ease-out}@keyframes fi{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}
+.custom-scrollbar::-webkit-scrollbar{width:6px;height:6px}.custom-scrollbar::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:4px}
+#toasts{position:fixed;top:70px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px}
+.toast{padding:12px 18px;border-radius:10px;border-left:4px solid;box-shadow:0 10px 25px rgba(0,0,0,.15);font-size:13px;font-weight:600;animation:fi .3s}
+.t-success{background:#ecfdf5;border-color:#10b981;color:#065f46}.t-error{background:#fef2f2;border-color:#ef4444;color:#991b1b}.t-info{background:#eff6ff;border-color:#3b82f6;color:#1e40af}
+table.cal td,table.cal th{border:1px solid #94a3b8;text-align:center}
+body.tv table.cal{font-size:1.25rem}
+body.tv #titulo{font-size:2.5rem}
+</style>
 </head>
 <body class="bg-slate-100 min-h-screen font-sans text-slate-800">
-    <div id="toastContainer"></div>
+<div id="toasts"></div>
 
-    <!-- AUTH -->
-    <div id="authView" class="flex items-center justify-center min-h-screen bg-slate-900 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]">
-        <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md border-t-4 border-emerald-600">
-            <div class="flex justify-center mb-6"><img src="logo.png" alt="Logo" class="h-16 drop-shadow-md"></div>
-            <div id="loginSection">
-                <h2 class="text-xl font-bold text-slate-800 text-center mb-1 uppercase tracking-wider">Gestão de Despesas</h2>
-                <p class="text-xs text-slate-500 text-center mb-6">Acesse com suas credenciais de TI</p>
-                <form id="loginForm" class="space-y-4">
-                    <div class="relative"><span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400"><i class="fa-solid fa-user"></i></span><input type="text" id="loginUser" required placeholder="nome.sobrenome" class="block w-full pl-10 pr-3 py-2.5 border rounded focus:ring-2 focus:ring-emerald-500 lowercase bg-slate-50 text-sm"></div>
-                    <div class="relative"><span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400"><i class="fa-solid fa-key"></i></span><input type="password" id="loginSenha" required placeholder="Senha" class="block w-full pl-10 pr-3 py-2.5 border rounded focus:ring-2 focus:ring-emerald-500 bg-slate-50 text-sm"></div>
-                    <button type="submit" id="btnLogin" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded mt-4 shadow-lg"><span id="loginText">Acessar Despesas <i class="fa-solid fa-arrow-right-to-bracket ml-2"></i></span></button>
-                    <div class="flex justify-between items-center mt-4 text-xs">
-                        <button type="button" onclick="toggleAuthView('register')" class="text-slate-500 hover:text-emerald-600 font-semibold"><i class="fa-solid fa-user-plus mr-1"></i> Criar Conta</button>
-                        <button type="button" onclick="abrirModalRecuperar()" class="text-emerald-600 hover:text-emerald-800 font-semibold underline">Esqueci minha senha</button>
-                    </div>
-                </form>
-            </div>
-            <div id="registerSection" class="hidden">
-                <h2 class="text-xl font-bold text-slate-800 text-center mb-6 uppercase tracking-wider"><i class="fa-solid fa-id-card text-slate-400 mr-2"></i> Novo Usuário</h2>
-                <form id="registerForm" class="space-y-3">
-                    <div class="grid grid-cols-2 gap-3"><input type="text" id="regNome" required placeholder="Nome" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"><input type="text" id="regSobrenome" required placeholder="Sobrenome" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></div>
-                    <select id="regEquipe" required class="w-full px-3 py-2 text-sm border rounded bg-slate-50"><option value="">Selecione Equipe...</option><option value="Anna">Equipe Anna</option><option value="Didi">Equipe Didi</option></select>
-                    <select id="regNivel" required class="w-full px-3 py-2 text-sm border rounded bg-slate-50"><option value="">Selecione Perfil...</option><option value="Suporte NN">Suporte NN</option><option value="Suporte N1">Suporte N1</option><option value="Suporte N2">Suporte N2</option><option value="Suporte N3">Suporte N3</option><option value="Analista de Suporte - N1">Analista de Suporte - N1</option><option value="Analista de Suporte N2">Analista de Suporte N2</option><option value="Coordenação GS">Coordenação GS</option><option value="Gerência GS">Gerência GS</option></select>
-                    <input type="password" id="regSenha" required placeholder="Crie uma Senha" class="w-full px-3 py-2 text-sm border rounded bg-slate-50">
-                    <button type="submit" id="btnRegister" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-2 rounded mt-4"><span id="regText"><i class="fa-solid fa-save mr-2"></i> Cadastrar</span></button>
-                </form>
-                <div class="mt-4 pt-4 border-t text-center"><button onclick="toggleAuthView('login')" class="text-slate-500 font-semibold text-sm">Voltar ao Login</button></div>
-            </div>
-        </div>
-    </div>
+<!-- LOGIN -->
+<div id="authView" class="hidden flex items-center justify-center min-h-screen bg-slate-900">
+  <form id="loginForm" class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md border-t-4 border-blue-600 space-y-4">
+    <div class="flex justify-center"><img src="logo.png" class="h-16" alt="Logo"></div>
+    <h2 class="text-xl font-bold text-center uppercase tracking-wider">Dashboard de Viagens</h2>
+    <input id="lUser" required placeholder="nome.sobrenome" class="w-full px-3 py-2.5 border rounded bg-slate-50 text-sm lowercase">
+    <input id="lPass" type="password" required placeholder="Senha" class="w-full px-3 py-2.5 border rounded bg-slate-50 text-sm">
+    <button class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded">Acessar</button>
+  </form>
+</div>
 
-    <!-- HEADER -->
-    <header id="globalHeader" class="bg-slate-900 border-b border-slate-700 sticky top-0 z-40 hidden">
-        <div class="container mx-auto px-4 h-16 flex justify-between items-center">
-            <div class="flex items-center gap-4 cursor-pointer" onclick="recarregarDashboard()">
-                <img src="logo.png" alt="Logo" class="h-10 bg-white rounded-md p-1">
-                <div><h1 class="text-white font-bold text-base">Despesas de Viagens</h1><p class="text-[10px] text-emerald-400 font-semibold">TI Claudino S/A</p></div>
-            </div>
-            <div class="flex items-center gap-4">
-                <span class="hidden sm:flex items-center gap-1 text-[10px] font-bold text-emerald-400 uppercase" title="Os dados são atualizados automaticamente"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Ao vivo</span>
-                <button id="btnViagens" onclick="irParaViagens()" class="hidden bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded transition" title="Abrir o sistema de Gestão de Viagens (horas)"><i class="fa-solid fa-clock mr-1"></i> Viagens</button> 
-                <button id="btnDashboard" onclick="irParaDashboard()" class="hidden bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded transition" title="Abrir o Dashboard (Coordenação/Gerência)"><i class="fa-solid fa-chart-line mr-1"></i> Dashboard</button>
-                <div class="text-right hidden md:block"><p class="text-sm font-medium text-white" id="navUserName"></p><p class="text-xs text-emerald-400 font-bold" id="navUserRole"></p></div>
-                <button onclick="logout()" class="text-slate-400 hover:text-red-400 font-semibold text-sm"><i class="fa-solid fa-power-off mr-1"></i> Sair</button>
-            </div>
-        </div>
+<!-- APP -->
+<div id="appView" class="hidden min-h-screen flex">
+  <aside id="sidebar" class="hidden w-56 bg-slate-900 text-slate-200 p-4 space-y-2 shrink-0">
+    <p class="text-[10px] font-bold uppercase text-slate-500 mb-2">Gestão</p>
+    <button onclick="abrirEvento()" class="w-full text-left px-3 py-2 rounded bg-emerald-600 hover:bg-emerald-700 text-sm font-bold"><i class="fa-solid fa-plus mr-2"></i>Novo evento</button>
+    <button onclick="abrirArquivos()" class="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-sm font-bold"><i class="fa-solid fa-folder-open mr-2"></i>Arquivos</button>
+    <button onclick="novaPlanilha()" class="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-sm font-bold"><i class="fa-solid fa-file-circle-plus mr-2"></i>Nova planilha</button>
+    <button onclick="renomearPlanilha()" class="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-sm font-bold"><i class="fa-solid fa-pen mr-2"></i>Renomear planilha</button>
+    <button onclick="abrirUsuario()" class="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-sm font-bold"><i class="fa-solid fa-user-plus mr-2"></i>Criar usuário</button>
+    <button onclick="irParaViagens()" class="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-sm font-bold"><i class="fa-solid fa-clock mr-2"></i>Viagens (horas)</button>
+  </aside>
+  <div class="flex-1 min-w-0">
+    <header class="bg-slate-900 border-b border-slate-700 h-14 px-4 flex items-center justify-between sticky top-0 z-40">
+      <div class="flex items-center gap-3"><img src="logo.png" class="h-9 bg-white rounded p-1" alt=""><h1 class="text-white font-bold hidden sm:block">Dashboard de Viagens</h1></div>
+      <div class="flex items-center gap-4">
+        <span class="text-[10px] font-bold text-emerald-400 uppercase flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>Ao vivo</span>
+        <button id="lnkViagens" onclick="irParaViagens()" class="hidden bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded"><i class="fa-solid fa-clock mr-1"></i>Viagens</button>
+        <span id="uNome" class="text-sm text-white hidden md:block"></span>
+        <button onclick="logout()" class="text-slate-400 hover:text-red-400 text-sm font-semibold"><i class="fa-solid fa-power-off mr-1"></i>Sair</button>
+      </div>
     </header>
-
-    <!-- MAIN -->
-    <main id="mainContent" class="hidden min-h-screen container mx-auto p-4 py-8">
-        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 border-b border-slate-300 pb-4 gap-4">
-            <div><h2 class="text-2xl font-bold text-slate-800" id="dashTitle"><i class="fa-solid fa-plane-departure text-emerald-600 mr-2"></i> Painel de Viagens</h2><p class="text-sm text-slate-500 mt-1" id="dashSubtitle"></p></div>
-            <div id="dashActionButtons" class="flex gap-2 flex-wrap"></div>
-        </div>
-        <div class="mb-6 flex gap-2 overflow-x-auto pb-2 custom-scrollbar" id="filtroSiglasLojas"></div>
-        <div id="gridViagens" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 fade-in"></div>
-
+    <main class="p-4">
+      <div id="aviso" class="hidden mb-3 bg-amber-50 border border-amber-300 text-amber-800 rounded-lg px-4 py-2 text-sm font-semibold"></div>
+      <div id="scroller" class="bg-white rounded-xl shadow-sm border overflow-auto custom-scrollbar">
+        <h2 id="titulo" class="text-center text-2xl md:text-3xl font-black py-3 border-b-2 border-slate-800"></h2>
+        <table class="cal min-w-full text-sm">
+          <thead><tr id="thead" class="bg-blue-700 text-white"></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
     </main>
+  </div>
+</div>
 
-    <!-- DETALHE VIAGEM -->
-    <div id="viagemDetalheView" class="hidden min-h-screen container mx-auto p-4 py-8 fade-in">
-        <button onclick="voltarDashboard()" class="text-emerald-600 hover:text-emerald-800 text-sm font-bold mb-4"><i class="fa-solid fa-arrow-left mr-1"></i> Voltar</button>
-        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
-            <div class="bg-slate-900 text-white px-6 py-4 flex flex-col md:flex-row justify-between md:items-center gap-4">
-                <div><span class="text-xs font-bold text-emerald-400 uppercase tracking-widest block" id="detalheLojaSigla"></span><h2 class="text-xl font-bold" id="detalheMotivo"></h2><p class="text-xs text-slate-300 mt-1" id="detalheParticipantes"></p></div>
-                <div id="detalheStatusBadge"></div>
-            </div>
-            <div class="p-6">
-                <div id="painelAcoesViagem" class="mb-6 flex flex-wrap gap-3 items-center justify-between border-b pb-4"></div>
-                <h3 class="text-sm font-bold text-slate-700 uppercase mb-3"><i class="fa-solid fa-receipt text-slate-400 mr-2"></i> Despesas (Ordem Cronológica)</h3>
-                <div class="overflow-auto custom-scrollbar border rounded">
-                    <table class="min-w-full text-sm text-left">
-                        <thead class="bg-slate-100 border-b">
-                            <tr>
-                                <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Data</th>
-                                <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Categoria</th>
-                                <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Local</th>
-                                <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px]">Loja</th>
-                                <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px] text-right">Valor</th>
-                                <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px] text-center">Comprovante</th>
-                                <th class="px-4 py-3 font-bold text-slate-500 uppercase text-[10px] text-center">Ação</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tbItensViagem" class="divide-y divide-slate-100"></tbody>
-                        <tfoot class="bg-slate-50 border-t">
-                            <tr><td colspan="4" class="px-4 py-3 text-right font-bold text-slate-600 text-xs uppercase">Total:</td><td class="px-4 py-3 text-right font-black text-emerald-600 text-lg" id="detalheTotalValor">R$ 0,00</td><td></td><td></td></tr>
-                        </tfoot>
-                    </table>
-                </div>
-            </div>
-        </div>
+<!-- MODAL EVENTO -->
+<div id="mEvento" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+  <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-lg border-t-4 border-emerald-600 max-h-[95vh] overflow-y-auto space-y-3">
+    <h3 class="text-lg font-bold"><i class="fa-solid fa-calendar-plus text-emerald-600 mr-2"></i><span id="mEvTitulo">Novo evento</span></h3>
+    <input type="hidden" id="eId">
+    <div class="grid grid-cols-2 gap-3">
+      <div><label class="text-[10px] font-bold text-slate-500">FILIAL</label><input id="eFilial" maxlength="3" class="w-full px-3 py-2 text-sm border rounded uppercase bg-slate-50"></div>
+      <div><label class="text-[10px] font-bold text-slate-500">POSTO/EXPOSIÇÃO</label><input id="ePosto" class="w-full px-3 py-2 text-sm border rounded uppercase bg-slate-50"></div>
     </div>
-
-    <!-- MODAL CRIAR VIAGEM (vários técnicos) -->
-    <div id="modalCriarViagem" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-        <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-md border-t-4 border-emerald-600 max-h-[95vh] overflow-y-auto">
-            <h3 class="text-lg font-bold text-slate-800 mb-1"><i class="fa-solid fa-route text-emerald-600 mr-2"></i> Gerar Viagem</h3>
-            <p class="text-[11px] text-slate-500 mb-4">Cria a viagem de despesas <b>e</b> o projeto de horas (Viagens-GS) para cada técnico selecionado.</p>
-            <div class="space-y-3">
-                <div><label class="block text-[10px] font-bold text-slate-500 mb-1">SIGLA DA LOJA</label><input type="text" id="novaViagemSigla" maxlength="3" placeholder="Ex: PIN" class="w-full px-3 py-2 text-sm border rounded uppercase bg-slate-50"></div>
-                <div>
-                    <label class="block text-[10px] font-bold text-slate-500 mb-1">CATEGORIA DO SERVIÇO</label>
-                    <select id="novaViagemTipo" onchange="checkOutrosViagem()" class="w-full px-3 py-2 text-sm border rounded bg-slate-50 mb-2">
-                        <option value="Inauguração">Inauguração</option>
-                        <option value="Reinauguração">Reinauguração</option>
-                        <option value="Pc-á-pc">Pc-á-pc</option>
-                        <option value="Impressoras">Impressoras</option>
-                        <option value="Networking">Networking</option>
-                        <option value="Outros">Outros...</option>
-                    </select>
-                    <input type="text" id="novaViagemOutros" placeholder="Especifique a categoria..." class="hidden w-full px-3 py-2 text-sm border rounded bg-white">
-                </div>
-                <div><label class="block text-[10px] font-bold text-slate-500 mb-1">MOTIVO (opcional - padrão: categoria)</label><input type="text" id="novaViagemMotivo" placeholder="Ex: Troca de Servidor" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></div>
-                <div>
-                    <div class="flex justify-between items-center mb-1">
-                        <label class="block text-[10px] font-bold text-slate-500">TÉCNICOS <span id="contTecnicos" class="text-emerald-600">(0 selecionados)</span></label>
-                        <button type="button" onclick="selecionarTodosTecnicos()" class="text-[10px] font-bold text-blue-600 hover:text-blue-800">Marcar / desmarcar visíveis</button>
-                    </div>
-                    <input type="text" id="buscaTecnico" oninput="renderListaTecnicos()" placeholder="Buscar técnico..." class="w-full px-3 py-2 text-sm border rounded bg-slate-50 mb-2">
-                    <div id="listaTecnicos" class="max-h-48 overflow-auto custom-scrollbar border rounded"></div>
-                </div>
-            </div>
-            <div class="flex justify-end gap-2 mt-6">
-                <button onclick="fecharModalCriarViagem()" class="px-4 py-2 text-sm font-bold text-slate-500">Cancelar</button>
-                <button onclick="confirmarCriarViagem()" id="btnCriarViagem" class="px-4 py-2 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded">Gerar</button>
-            </div>
-        </div>
+    <div><label class="text-[10px] font-bold text-slate-500">TIPO DE EVENTO</label>
+      <select id="eTipo" onchange="checkOutrosEv()" class="w-full px-3 py-2 text-sm border rounded bg-slate-50 mb-2"><option>Inauguração</option><option>Reinauguração</option><option>Mudança de status</option><option>Pc-á-pc</option><option>Impressoras</option><option>Networking</option><option value="Outros">Outros...</option></select>
+      <input id="eOutros" placeholder="Especifique o tipo..." class="hidden w-full px-3 py-2 text-sm border rounded bg-white"></div>
+    <div class="grid grid-cols-3 gap-3">
+      <div><label class="text-[10px] font-bold text-slate-500">ENVIO EQUIP.</label><input type="date" id="eEnvio" class="w-full px-2 py-2 text-sm border rounded bg-slate-50"></div>
+      <div><label class="text-[10px] font-bold text-slate-500">SAÍDA</label><input type="date" id="eSaida" class="w-full px-2 py-2 text-sm border rounded bg-slate-50"></div>
+      <div><label class="text-[10px] font-bold text-slate-500">DATA EVENTO</label><input type="date" id="eData" class="w-full px-2 py-2 text-sm border rounded bg-slate-50"></div>
     </div>
+    <div><label class="text-[10px] font-bold text-slate-500">Nº DA VIAGEM <span class="text-slate-400">(visível só para Gerência/Coordenação)</span></label><input id="eNum" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></div>
+    <div><label class="text-[10px] font-bold text-slate-500">EQUIPE <span id="eCont" class="text-emerald-600"></span></label>
+      <input id="eBusca" oninput="renderTecs()" placeholder="Buscar técnico..." class="w-full px-3 py-2 text-sm border rounded bg-slate-50 mb-2">
+      <div id="eTecs" class="max-h-40 overflow-auto custom-scrollbar border rounded"></div></div>
+    <p class="text-[11px] text-slate-500">Ao salvar, a viagem (projeto de horas) é criada para cada técnico selecionado e o dashboard atualiza na hora para todos.</p>
+    <div class="flex justify-end gap-2"><button onclick="fechar('mEvento')" class="px-4 py-2 text-sm font-bold text-slate-500">Cancelar</button><button id="btnSalvarEv" onclick="salvarEvento()" class="px-4 py-2 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded">Salvar</button></div>
+  </div>
+</div>
 
-    <!-- MODAL OCR -->
-    <div id="modalOCR" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
-        <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-lg border-t-4 border-amber-500 max-h-[90vh] overflow-y-auto">
-            <h3 class="text-lg font-bold text-slate-800 mb-2"><i class="fa-solid fa-camera text-amber-500 mr-2"></i> Enviar Nota para a Viagem</h3>
-            <p class="text-xs text-slate-500 mb-4">Envie a foto. <b>Data, hora, valor e local (cidade - UF)</b> são lidos automaticamente. <b>Categoria e Loja</b> são manuais.</p>
-            <input type="file" id="fileOCR" accept="image/*" class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100 mb-4" onchange="processarOCR(event)">
-            <div id="ocrPreviewContainer" class="hidden mb-4 text-center bg-slate-50 border rounded p-2"><img id="ocrPreview" class="max-h-56 mx-auto rounded shadow-sm" alt="Preview"><p class="text-[10px] text-slate-500 mt-2">Esta imagem será salva no Google Drive e vinculada a esta viagem.</p></div>
-            <div id="ocrLoader" class="hidden text-center py-6 text-amber-600 font-bold text-sm"><i class="fa-solid fa-spinner fa-spin text-2xl block mb-2"></i> Lendo...</div>
-            <div id="ocrForm" class="hidden space-y-3 border-t pt-4">
-                <div class="grid grid-cols-2 gap-3">
-                    <div><label class="block text-[10px] font-bold text-slate-500 mb-1">DATA <span class="text-emerald-600">(auto)</span></label><input type="text" id="ocrData" placeholder="DD/MM/AAAA" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></div>
-                    <div><label class="block text-[10px] font-bold text-slate-500 mb-1">HORA <span class="text-slate-400">(auto/manual)</span></label><input type="text" id="ocrHora" placeholder="HH:MM" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></div>
-                </div>
-                <div><label class="block text-[10px] font-bold text-slate-500 mb-1">LOCAL (CIDADE - UF) <span class="text-emerald-600">(auto)</span></label><input type="text" id="ocrLocal" placeholder="Ex: Santa Inês - MA" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></div>
-                <div class="grid grid-cols-2 gap-3">
-                    <div><label class="block text-[10px] font-bold text-slate-500 mb-1">VALOR (R$) <span class="text-emerald-600">(auto)</span></label><input type="number" step="0.01" id="ocrValor" placeholder="Ex: 66.00" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></div>
-                    <div><label class="block text-[10px] font-bold text-slate-500 mb-1">LOJA <span class="text-slate-400">(manual)</span></label><input type="text" id="ocrLoja" placeholder="Ex: TER" maxlength="3" class="w-full px-3 py-2 text-sm uppercase border rounded bg-slate-50"></div>
-                </div>
-                <div><label class="block text-[10px] font-bold text-slate-500 mb-1">CATEGORIA <span class="text-slate-400">(manual)</span></label><select id="ocrCategoria" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"><option value="">Selecione...</option><option value="Café da Manhã">Café da Manhã</option><option value="Lanche da Manhã">Lanche da Manhã</option><option value="Almoço">Almoço</option><option value="Lanche da Tarde">Lanche da Tarde</option><option value="Janta">Janta</option><option value="Lanche da Noite">Lanche da Noite</option><option value="Agua">Água</option><option value="Hospedagem">Hospedagem</option><option value="Uber/Taxi/99">Uber/Taxi/99</option><option value="Passagem de Onibus">Passagem de Ônibus</option></select></div>
-            </div>
-            <div class="flex justify-end gap-2 mt-6">
-                <button onclick="document.getElementById('modalOCR').classList.add('hidden')" class="px-4 py-2 text-sm font-bold text-slate-500">Cancelar</button>
-                <button onclick="salvarNotaNaViagem()" id="btnSalvarNota" class="hidden px-4 py-2 text-sm font-bold bg-amber-500 hover:bg-amber-600 text-white rounded">Guardar</button>
-            </div>
-        </div>
-    </div>
+<!-- MODAL ARQUIVOS -->
+<div id="mArq" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+  <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-md border-t-4 border-blue-600 space-y-3">
+    <h3 class="text-lg font-bold"><i class="fa-solid fa-folder-open text-blue-600 mr-2"></i>Planilhas</h3>
+    <div id="arqLista" class="max-h-72 overflow-auto custom-scrollbar space-y-2"></div>
+    <div class="flex justify-end"><button onclick="fechar('mArq')" class="px-4 py-2 text-sm font-bold text-slate-500">Fechar</button></div>
+  </div>
+</div>
 
-    <!-- MODAL EDITAR COMPROVANTE -->
-    <div id="modalEditarComprovante" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
-        <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-lg border-t-4 border-blue-600 max-h-[90vh] overflow-y-auto">
-            <h3 class="text-lg font-bold text-slate-800 mb-2"><i class="fa-solid fa-pen text-blue-600 mr-2"></i> Editar Comprovante</h3>
-            <p class="text-xs text-slate-500 mb-4">Ajuste os dados ou troque a foto se necessário.</p>
-            <input type="hidden" id="editIdComprovante">
-            <input type="file" id="editFileOCR" accept="image/*" class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 mb-3">
-            <div id="editPreviewContainer" class="hidden mb-3 text-center bg-slate-50 border rounded p-2"><img id="editPreviewImg" class="max-h-48 mx-auto rounded shadow-sm" alt="Foto atual"><p class="text-[10px] text-slate-500 mt-2">Foto atual (selecione outra acima para substituir)</p></div>
-            <div class="space-y-3">
-                <div class="grid grid-cols-2 gap-3">
-                    <div><label class="block text-[10px] font-bold text-slate-500 mb-1">DATA</label><input type="text" id="editData" placeholder="DD/MM/AAAA" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></div>
-                    <div><label class="block text-[10px] font-bold text-slate-500 mb-1">HORA</label><input type="text" id="editHora" placeholder="HH:MM" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></div>
-                </div>
-                <div><label class="block text-[10px] font-bold text-slate-500 mb-1">LOCAL (CIDADE - UF)</label><input type="text" id="editLocal" placeholder="Ex: Santa Inês - MA" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></div>
-                <div class="grid grid-cols-2 gap-3">
-                    <div><label class="block text-[10px] font-bold text-slate-500 mb-1">VALOR (R$)</label><input type="number" step="0.01" id="editValor" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></div>
-                    <div><label class="block text-[10px] font-bold text-slate-500 mb-1">LOJA</label><input type="text" id="editLoja" maxlength="3" class="w-full px-3 py-2 text-sm uppercase border rounded bg-slate-50"></div>
-                </div>
-                <div><label class="block text-[10px] font-bold text-slate-500 mb-1">CATEGORIA</label><select id="editCategoria" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"><option value="">Selecione...</option><option value="Café da Manhã">Café da Manhã</option><option value="Lanche da Manhã">Lanche da Manhã</option><option value="Almoço">Almoço</option><option value="Lanche da Tarde">Lanche da Tarde</option><option value="Janta">Janta</option><option value="Lanche da Noite">Lanche da Noite</option><option value="Agua">Água</option><option value="Hospedagem">Hospedagem</option><option value="Uber/Taxi/99">Uber/Taxi/99</option><option value="Passagem de Onibus">Passagem de Ônibus</option></select></div>
-            </div>
-            <div class="flex justify-end gap-2 mt-6">
-                <button onclick="document.getElementById('modalEditarComprovante').classList.add('hidden')" class="px-4 py-2 text-sm font-bold text-slate-500">Cancelar</button>
-                <button onclick="salvarEdicaoComprovante()" id="btnSalvarEdicao" class="px-4 py-2 text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white rounded">Salvar Alterações</button>
-            </div>
-        </div>
-    </div>
+<!-- MODAL USUÁRIO -->
+<div id="mUser" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+  <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-sm border-t-4 border-slate-800 space-y-3">
+    <h3 class="text-lg font-bold"><i class="fa-solid fa-user-plus mr-2"></i>Criar usuário</h3>
+    <div class="grid grid-cols-2 gap-3"><input id="uNomeN" placeholder="Nome" class="px-3 py-2 text-sm border rounded bg-slate-50"><input id="uSobN" placeholder="Sobrenome" class="px-3 py-2 text-sm border rounded bg-slate-50"></div>
+    <select id="uEquipe" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"><option value="-">Sem equipe</option><option value="Anna">Equipe Anna</option><option value="Didi">Equipe Didi</option></select>
+    <select id="uNivel" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"><option>Suporte NN</option><option>Suporte N1</option><option>Suporte N2</option><option>Suporte N3</option><option>Analista de Suporte - N1</option><option>Analista de Suporte N2</option><option>Coordenação GS</option><option>Gerência GS</option><option>Monitor</option></select>
+    <input id="uSenha" type="password" placeholder="Senha" class="w-full px-3 py-2 text-sm border rounded bg-slate-50">
+    <div class="flex justify-end gap-2"><button onclick="fechar('mUser')" class="px-4 py-2 text-sm font-bold text-slate-500">Cancelar</button><button onclick="criarUsuario()" class="px-4 py-2 text-sm font-bold bg-slate-800 text-white rounded">Criar</button></div>
+  </div>
+</div>
 
-    <!-- MODAL RECUPERAR -->
-    <div id="modalRecuperar" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
-        <div class="bg-white p-6 rounded-xl shadow-xl w-96 border-t-4 border-emerald-500">
-            <h3 class="text-lg font-bold text-slate-800 mb-4"><i class="fa-solid fa-unlock-keyhole text-emerald-500 mr-2"></i> Redefinir Senha</h3>
-            <div id="recupStep1">
-                <input type="text" id="recupLoginInput" placeholder="Digite seu login..." oninput="buscarUsuariosRecup()" class="w-full px-3 py-2 text-sm border rounded bg-slate-50 mb-3 lowercase">
-                <div id="recupListaUsers" class="max-h-40 overflow-auto mb-4"></div>
-                <div class="flex justify-end"><button onclick="document.getElementById('modalRecuperar').classList.add('hidden')" class="px-4 py-2 text-sm font-bold text-slate-500">Fechar</button></div>
-            </div>
-            <div id="recupStep2" class="hidden">
-                <p id="recupUserSelected" class="text-xs font-bold text-slate-700 mb-3"></p>
-                <input type="password" id="recupNovaSenha" placeholder="Nova senha (min 4 chars)" class="w-full px-3 py-2 text-sm border rounded bg-slate-50 mb-3">
-                <div class="flex justify-between"><button onclick="document.getElementById('recupStep2').classList.add('hidden');document.getElementById('recupStep1').classList.remove('hidden');" class="text-xs text-slate-500">Voltar</button><button onclick="confirmarRedefinirSenha()" id="btnRedefinir" class="px-4 py-2 text-sm font-bold bg-emerald-600 text-white rounded">Redefinir</button></div>
-            </div>
-        </div>
-    </div>
+<script>
+const API_URL = "https://script.google.com/macros/s/AKfycbyv6rztF_a5ePHzRhzCMJDawDOHhF-le_3MgvoeMY2WUGjVRQBPmt2cSuV6Mp71MGnpUQ/exec";
+const SESSAO_MS = 4 * 60 * 60 * 1000, POLL_MS = 8000;
+const MESES = ['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO','JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
+const VIAGENS_URL = "https://viagens-gs.vercel.app/";
 
-    <!-- MODAL VISUALIZADOR DE COMPROVANTE (ver / baixar / imprimir) -->
-    <div id="modalVisualizador" class="hidden fixed inset-0 bg-black bg-opacity-70 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) fecharVisualizador()">
-        <div class="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[95vh] flex flex-col overflow-hidden">
-            <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 bg-slate-900 text-white">
-                <h3 class="font-bold text-sm"><i class="fa-solid fa-receipt text-emerald-400 mr-2"></i> Comprovante</h3>
-                <div class="flex gap-2">
-                    <button onclick="baixarComprovante()" class="px-3 py-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 rounded"><i class="fa-solid fa-download mr-1"></i> Baixar</button>
-                    <button onclick="imprimirComprovante()" class="px-3 py-1.5 text-xs font-bold bg-blue-600 hover:bg-blue-700 rounded"><i class="fa-solid fa-print mr-1"></i> Imprimir</button>
-                    <button onclick="fecharVisualizador()" class="px-3 py-1.5 text-xs font-bold bg-slate-700 hover:bg-slate-600 rounded"><i class="fa-solid fa-xmark mr-1"></i> Fechar</button>
-                </div>
-            </div>
-            <div class="flex-1 overflow-auto bg-slate-100 p-4 text-center">
-                <div id="visualizadorLoader" class="hidden py-16 text-emerald-600 font-bold text-sm"><i class="fa-solid fa-spinner fa-spin text-2xl block mb-2"></i> Carregando imagem...</div>
-                <img id="visualizadorImg" class="hidden mx-auto max-w-full rounded shadow" alt="Comprovante">
-            </div>
-        </div>
-    </div>
+// ===== LOGIN ÚNICO ENTRE SISTEMAS (recebe a sessão vinda do viagens-gs) =====
+(function consumirSSO() {
+  const m = location.hash.match(/^#sso=(.+)$/);
+  if (!m) return;
+  try {
+    const o = JSON.parse(decodeURIComponent(escape(atob(m[1]))));
+    const t = parseInt(o.t, 10);
+    if (o && o.u && o.u.login && t && (/Monitor/i.test(o.u.nivel || '') || Date.now() - t < SESSAO_MS)) {
+      localStorage.setItem('usuarioAtivo', JSON.stringify(o.u));
+      localStorage.setItem('loginTimestamp', String(/Monitor/i.test(o.u.nivel || '') ? Date.now() : t));
+    }
+  } catch (e) {}
+  history.replaceState(null, '', location.pathname + location.search);
+})();
 
-    <script src="despesas.js?v=viagem4"></script>
+function irParaViagens() {
+  if (!user) return;
+  const pacote = { u: user, t: localStorage.getItem('loginTimestamp') || Date.now().toString() };
+  const payload = btoa(unescape(encodeURIComponent(JSON.stringify(pacote))));
+  window.location.href = VIAGENS_URL + '#sso=' + payload;
+}
+
+const RX_GESTAO = /Coordena|Ger[eê]ncia/i;
+const TIPOS_FIXOS = ['Inauguração','Reinauguração','Mudança de status','Pc-á-pc','Impressoras','Networking'];
+const $ = id => document.getElementById(id);
+const esc = v => String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+let user = null, planilhas = [], planId = '', eventos = [], usuarios = [], tecSel = new Set(), busy = 0, lastSig = '', timer = null, tvTimer = null;
+const isGestao = () => !!user && RX_GESTAO.test(user.nivel || '');
+const isMonitor = () => !!user && /Monitor/i.test(user.nivel || '');
+
+function toast(msg, type = 'info') { const t = document.createElement('div'); t.className = 'toast t-' + type; t.textContent = msg; $('toasts').appendChild(t); setTimeout(() => t.remove(), 4000); }
+async function post(d) { try { const r = await fetch(API_URL, { method: 'POST', body: JSON.stringify(d) }); return await r.json(); } catch (e) { return null; } }
+const fechar = id => $(id).classList.add('hidden');
+
+// ===== datas / status automático =====
+const p2 = n => String(n).padStart(2, '0');
+function hojeISO() { const d = new Date(); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); }
+const fmt = iso => iso ? iso.split('-').reverse().join('/') : '';
+// Pendente -> dia da saída: trânsito -> depois: andamento -> dia do evento: concluindo -> dia seguinte: concluído
+function statusEvento(ev) {
+  const h = hojeISO();
+  if (ev.dataEvento && h > ev.dataEvento) return { txt: 'Concluído', cls: 'text-emerald-600' };
+  if (ev.dataEvento && h === ev.dataEvento) return { txt: ev.tipo + ' concluindo', cls: 'text-purple-700' };
+  if (ev.dataSaida && h === ev.dataSaida) return { txt: 'Em viagem: trânsito', cls: 'text-blue-600' };
+  if (ev.dataSaida && h > ev.dataSaida) return { txt: 'Projeto em andamento', cls: 'text-amber-600' };
+  return { txt: 'Pendente', cls: 'text-red-600' };
+}
+function primeiroNome(login) {
+  const u = usuarios.find(x => String(x.login).toLowerCase() === String(login).toLowerCase());
+  const n = u ? String(u.nome).split(' ')[0] : String(login).split('.')[0];
+  return n.charAt(0).toUpperCase() + n.slice(1).toLowerCase();
+}
+
+// ===== sessão =====
+window.onload = () => {
+  const u = localStorage.getItem('usuarioAtivo'), t = localStorage.getItem('loginTimestamp');
+  if (u && t) {
+    try { const o = JSON.parse(u); if (/Monitor/i.test(o.nivel || '') || Date.now() - parseInt(t) < SESSAO_MS) { user = o; return iniciar(); } } catch (e) {}
+  }
+  $('authView').classList.remove('hidden');
+};
+$('loginForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const r = await post({ action: 'login', login: $('lUser').value.trim(), senha: $('lPass').value });
+  if (r && r.success) { localStorage.setItem('usuarioAtivo', JSON.stringify(r.user)); localStorage.setItem('loginTimestamp', Date.now().toString()); user = r.user; iniciar(); }
+  else toast((r && r.message) || 'Erro de conexão', 'error');
+});
+function logout() { clearInterval(timer); clearInterval(tvTimer); localStorage.removeItem('usuarioAtivo'); localStorage.removeItem('loginTimestamp'); location.reload(); }
+
+async function iniciar() {
+  $('authView').classList.add('hidden'); $('appView').classList.remove('hidden');
+  $('uNome').textContent = user.nome + ' ' + user.sobrenome;
+  $('sidebar').classList.toggle('hidden', !isGestao());
+  $('lnkViagens').classList.toggle('hidden', isGestao() || isMonitor());
+  if (isMonitor()) { document.body.classList.add('tv'); iniciarAutoScroll(); }
+  const u = await post({ action: 'getUsers' }); if (u && u.success) usuarios = u.users;
+  await carregar();
+  timer = setInterval(() => {
+    if (!isMonitor() && Date.now() - parseInt(localStorage.getItem('loginTimestamp') || 0) >= SESSAO_MS) return logout();
+    if (!document.hidden && busy === 0) carregar();
+  }, POLL_MS);
+}
+
+// TV: rola a tabela devagar quando não cabe na tela
+function iniciarAutoScroll() {
+  let dir = 1, pausa = 0;
+  tvTimer = setInterval(() => {
+    const w = document.documentElement;
+    const max = w.scrollHeight - w.clientHeight;
+    if (max <= 5) return;
+    if (pausa > 0) { pausa--; return; }
+    const y = window.scrollY + dir;
+    window.scrollTo(0, y);
+    if (y >= max) { dir = -1; pausa = 100; } else if (y <= 0) { dir = 1; pausa = 100; }
+  }, 40);
+}
+
+async function carregar() {
+  const r = await post({ action: 'dashGet', login: user.login, nivel: user.nivel, planilhaId: planId });
+  if (!r || !r.success) return;
+  planilhas = r.planilhas; planId = r.planilhaId; eventos = r.eventos;
+  const sig = JSON.stringify(r) + hojeISO();
+  if (sig === lastSig) return; lastSig = sig;
+  render();
+}
+
+function render() {
+  const pl = planilhas.find(p => p.id === planId);
+  const ev = eventos.slice().sort((a, b) => a.dataEvento.localeCompare(b.dataEvento));
+  const meses = [...new Set(ev.map(e => +e.dataEvento.slice(5, 7)).filter(Boolean))].map(m => MESES[m - 1]);
+  const ano = ev.length ? ev[0].dataEvento.slice(0, 4) : new Date().getFullYear();
+  $('titulo').textContent = pl ? 'Calendário com eventos para ' + (pl.titulo || (meses.join(' e ') + ' de ' + ano)) : 'Nenhuma planilha ativa';
+  const av = $('aviso');
+  if (isGestao() && pl && !pl.ativa) { av.textContent = 'Você está vendo uma planilha que NÃO está exibida para o suporte. Use "Arquivos" > Ativar para publicá-la.'; av.classList.remove('hidden'); }
+  else if (isGestao() && !pl) { av.textContent = 'Crie uma planilha em "Nova planilha" para começar.'; av.classList.remove('hidden'); }
+  else av.classList.add('hidden');
+  const g = isGestao();
+  $('thead').innerHTML = ['Filial','Posto/Exposição','Tipo de evento','Data','Envio dos Equip.','Equipe','Data da saída','Status'].concat(g ? ['Nº Viagem','Ações'] : []).map(h => `<th class="px-3 py-3 font-bold">${h}</th>`).join('');
+  let html = '', mesAtual = null;
+  const cols = g ? 10 : 8;
+  if (!ev.length) html = `<tr><td colspan="${cols}" class="p-10 text-slate-400">Nenhum evento cadastrado.</td></tr>`;
+  ev.forEach(e => {
+    const m = +e.dataEvento.slice(5, 7);
+    if (mesAtual !== null && m !== mesAtual) html += `<tr><td colspan="${cols}" class="font-black py-1 bg-white">${MESES[m - 1]}</td></tr>`;
+    mesAtual = m;
+    const s = statusEvento(e);
+    const equipe = e.equipe.split(',').filter(Boolean).map(primeiroNome).join(' / ');
+    html += `<tr class="fade-in bg-white font-semibold"><td class="px-3 py-2 font-black">${esc(e.filial)}</td><td class="px-3 py-2">${esc(e.posto)}</td><td class="px-3 py-2">${esc(e.tipo)}</td><td class="px-3 py-2 font-bold" style="background:#92d050">${fmt(e.dataEvento)}</td><td class="px-3 py-2 font-bold" style="background:#fff2cc">${fmt(e.dataEnvio)}</td><td class="px-3 py-2 font-bold">${esc(equipe)}</td><td class="px-3 py-2 font-bold" style="background:#ffc000">${fmt(e.dataSaida)}</td><td class="px-3 py-2 font-bold ${s.cls}">${esc(s.txt)}</td>`;
+    if (g) html += `<td class="px-3 py-2 font-mono text-xs">${esc(e.numViagem || '-')}</td><td class="px-3 py-2 whitespace-nowrap"><button onclick="abrirEvento('${e.id}')" class="text-slate-400 hover:text-orange-500 mr-3"><i class="fa-solid fa-pen"></i></button><button onclick="excluirEvento('${e.id}')" class="text-slate-400 hover:text-red-500"><i class="fa-solid fa-trash"></i></button></td>`;
+    html += '</tr>';
+  });
+  $('tbody').innerHTML = html;
+}
+
+// ===== evento =====
+function checkOutrosEv() { const o = $('eTipo').value === 'Outros'; $('eOutros').classList.toggle('hidden', !o); if (!o) $('eOutros').value = ''; }
+function abrirEvento(id) {
+  if (!planId) return toast('Crie uma planilha primeiro.', 'error');
+  const e = (id && eventos.find(x => x.id === id)) || {};
+  $('mEvTitulo').textContent = id ? 'Editar evento' : 'Novo evento';
+  $('eId').value = e.id || ''; $('eFilial').value = e.filial || ''; $('ePosto').value = e.posto || '';
+  if (e.tipo && TIPOS_FIXOS.indexOf(e.tipo) === -1) { $('eTipo').value = 'Outros'; checkOutrosEv(); $('eOutros').value = e.tipo; }
+  else { $('eTipo').value = e.tipo || 'Inauguração'; checkOutrosEv(); }
+  $('eEnvio').value = e.dataEnvio || ''; $('eSaida').value = e.dataSaida || '';
+  $('eData').value = e.dataEvento || ''; $('eNum').value = e.numViagem || ''; $('eBusca').value = '';
+  tecSel = new Set(String(e.equipe || '').split(',').filter(Boolean).map(s => s.toLowerCase()));
+  renderTecs(); $('mEvento').classList.remove('hidden');
+}
+function renderTecs() {
+  const q = $('eBusca').value.toLowerCase(), box = $('eTecs'); box.innerHTML = '';
+  usuarios.filter(u => !RX_GESTAO.test(u.nivel || '') && !/Monitor/i.test(u.nivel || '') && (u.nome + ' ' + u.login).toLowerCase().includes(q)).forEach(u => {
+    const lg = String(u.login).toLowerCase();
+    const lb = document.createElement('label'); lb.className = 'flex items-center gap-2 px-3 py-2 border-b text-sm cursor-pointer hover:bg-slate-50';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'h-4 w-4 accent-emerald-600'; cb.checked = tecSel.has(lg);
+    cb.onchange = () => { cb.checked ? tecSel.add(lg) : tecSel.delete(lg); $('eCont').textContent = `(${tecSel.size})`; };
+    lb.appendChild(cb); lb.insertAdjacentHTML('beforeend', `<span><b>${esc(u.nome)}</b> <span class="text-[11px] text-slate-400 font-mono">${esc(u.login)}</span></span>`);
+    box.appendChild(lb);
+  });
+  $('eCont').textContent = `(${tecSel.size})`;
+}
+async function salvarEvento() {
+  let tipo = $('eTipo').value; if (tipo === 'Outros') tipo = $('eOutros').value.trim();
+  const ev = { id: $('eId').value, filial: $('eFilial').value.trim().toUpperCase(), posto: $('ePosto').value.trim().toUpperCase(), tipo, dataEnvio: $('eEnvio').value, dataSaida: $('eSaida').value, dataEvento: $('eData').value, numViagem: $('eNum').value.trim(), equipe: [...tecSel].join(',') };
+  if (!ev.filial || !ev.tipo || !ev.dataEvento || !ev.dataSaida || !tecSel.size) return toast('Informe filial, tipo, datas de saída/evento e ao menos um técnico.', 'error');
+  if (ev.dataSaida > ev.dataEvento) return toast('A data da saída não pode ser depois da data do evento.', 'error');
+  const b = $('btnSalvarEv'); b.disabled = true; busy++;
+  const r = await post({ action: 'dashSalvarEvento', nivel: user.nivel, login: user.login, planilhaId: planId, evento: ev });
+  busy--; b.disabled = false;
+  if (r && r.success) { fechar('mEvento'); toast('Evento salvo e viagens geradas para a equipe.', 'success'); lastSig = ''; carregar(); }
+  else toast((r && r.message) || 'Falha ao salvar.', 'error');
+}
+async function excluirEvento(id) {
+  if (!confirm('Excluir este evento do dashboard?')) return;
+  const r = await post({ action: 'dashExcluirEvento', nivel: user.nivel, id });
+  if (r && r.success) { toast('Evento excluído.', 'success'); lastSig = ''; carregar(); } else toast('Falha ao excluir.', 'error');
+}
+
+// ===== planilhas =====
+async function novaPlanilha() {
+  const t = prompt('Título da nova planilha (ex.: NOVEMBRO e DEZEMBRO de 2026):'); if (!t) return;
+  const r = await post({ action: 'dashNovaPlanilha', nivel: user.nivel, login: user.login, titulo: t });
+  if (r && r.success) { planId = r.id; toast('Planilha criada e ativada.', 'success'); lastSig = ''; carregar(); } else toast('Falha ao criar.', 'error');
+}
+async function renomearPlanilha() {
+  const pl = planilhas.find(p => p.id === planId); if (!pl) return toast('Nenhuma planilha selecionada.', 'error');
+  const t = prompt('Novo título:', pl.titulo); if (!t) return;
+  const r = await post({ action: 'dashRenomearPlanilha', nivel: user.nivel, id: planId, titulo: t });
+  if (r && r.success) { toast('Título alterado.', 'success'); lastSig = ''; carregar(); } else toast('Falha ao renomear.', 'error');
+}
+function abrirArquivos() {
+  $('arqLista').innerHTML = planilhas.map(p => `<div class="flex items-center justify-between border rounded p-3 ${p.id === planId ? 'border-blue-500 bg-blue-50' : ''}"><div><p class="text-sm font-bold">${esc(p.titulo)}</p><p class="text-[10px] text-slate-500">${p.ativa ? 'Exibida para o suporte' : 'Arquivada (só Gestão vê)'}</p></div><div class="flex gap-3"><button onclick="verPlanilha('${p.id}')" class="text-xs font-bold text-blue-600">Ver</button>${p.ativa ? '' : `<button onclick="ativarPlanilha('${p.id}')" class="text-xs font-bold text-emerald-600">Ativar</button>`}<button onclick="excluirPlanilha('${p.id}')" class="text-xs font-bold text-red-600">Excluir</button></div></div>`).join('') || '<p class="text-sm text-slate-400 text-center">Nenhuma planilha.</p>';
+  $('mArq').classList.remove('hidden');
+}
+function verPlanilha(id) { planId = id; lastSig = ''; fechar('mArq'); carregar(); }
+async function ativarPlanilha(id) { await post({ action: 'dashAtivarPlanilha', nivel: user.nivel, id }); planId = id; lastSig = ''; fechar('mArq'); toast('Planilha ativada para o suporte.', 'success'); carregar(); }
+async function excluirPlanilha(id) {
+  if (!confirm('Excluir esta planilha e todos os eventos dela?')) return;
+  const r = await post({ action: 'dashExcluirPlanilha', nivel: user.nivel, id });
+  if (r && r.success) { if (planId === id) planId = ''; fechar('mArq'); toast('Planilha excluída.', 'success'); lastSig = ''; carregar(); } else toast('Falha ao excluir.', 'error');
+}
+
+// ===== usuário =====
+function abrirUsuario() { ['uNomeN','uSobN','uSenha'].forEach(i => $(i).value = ''); $('mUser').classList.remove('hidden'); }
+async function criarUsuario() {
+  const d = { action: 'dashCriarUsuario', nivel: user.nivel, nome: $('uNomeN').value, sobrenome: $('uSobN').value, senha: $('uSenha').value, equipe: $('uEquipe').value, nivelNovo: $('uNivel').value };
+  if (!d.nome || !d.sobrenome || !d.senha) return toast('Preencha nome, sobrenome e senha.', 'error');
+  const r = await post(d);
+  if (r && r.success) { toast('Usuário criado: ' + r.login, 'success'); fechar('mUser'); const u = await post({ action: 'getUsers' }); if (u && u.success) usuarios = u.users; }
+  else toast((r && r.message) || 'Erro ao criar.', 'error');
+}
+</script>
 </body>
 </html>
