@@ -9,9 +9,10 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <style>
 button:focus,input:focus,select:focus{outline:none!important;box-shadow:none!important}
-.fade-in{animation:fi .4s ease-out}@keyframes fi{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}
+.fade-in{animation:fi .35s ease-out}@keyframes fi{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}
+.pop{animation:pp .25s ease-out}@keyframes pp{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
 .custom-scrollbar::-webkit-scrollbar{width:6px;height:6px}.custom-scrollbar::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:4px}
-#toasts{position:fixed;top:70px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px}
+#toasts{position:fixed;top:70px;right:20px;z-index:10000;display:flex;flex-direction:column;gap:8px}
 .toast{padding:12px 18px;border-radius:10px;border-left:4px solid;box-shadow:0 10px 25px rgba(0,0,0,.15);font-size:13px;font-weight:600;animation:fi .3s}
 .t-success{background:#ecfdf5;border-color:#10b981;color:#065f46}.t-error{background:#fef2f2;border-color:#ef4444;color:#991b1b}.t-info{background:#eff6ff;border-color:#3b82f6;color:#1e40af}
 table.cal td,table.cal th{border:1px solid #94a3b8;text-align:center}
@@ -40,7 +41,6 @@ body.tv #titulo{font-size:2.5rem}
     <button onclick="abrirEvento()" class="w-full text-left px-3 py-2 rounded bg-emerald-600 hover:bg-emerald-700 text-sm font-bold"><i class="fa-solid fa-plus mr-2"></i>Novo evento</button>
     <button onclick="abrirArquivos()" class="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-sm font-bold"><i class="fa-solid fa-folder-open mr-2"></i>Arquivos</button>
     <button onclick="novaPlanilha()" class="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-sm font-bold"><i class="fa-solid fa-file-circle-plus mr-2"></i>Nova planilha</button>
-    <button onclick="renomearPlanilha()" class="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-sm font-bold"><i class="fa-solid fa-pen mr-2"></i>Renomear planilha</button>
     <button onclick="abrirUsuario()" class="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-sm font-bold"><i class="fa-solid fa-user-plus mr-2"></i>Criar usuário</button>
     <button onclick="irParaViagens()" class="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-sm font-bold"><i class="fa-solid fa-clock mr-2"></i>Viagens (horas)</button>
   </aside>
@@ -69,12 +69,12 @@ body.tv #titulo{font-size:2.5rem}
 
 <!-- MODAL EVENTO -->
 <div id="mEvento" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-  <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-lg border-t-4 border-emerald-600 max-h-[95vh] overflow-y-auto space-y-3">
+  <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-lg border-t-4 border-emerald-600 max-h-[95vh] overflow-y-auto space-y-3 pop">
     <h3 class="text-lg font-bold"><i class="fa-solid fa-calendar-plus text-emerald-600 mr-2"></i><span id="mEvTitulo">Novo evento</span></h3>
     <input type="hidden" id="eId">
     <div class="grid grid-cols-2 gap-3">
-      <div><label class="text-[10px] font-bold text-slate-500">FILIAL</label><input id="eFilial" maxlength="3" class="w-full px-3 py-2 text-sm border rounded uppercase bg-slate-50"></div>
-      <div><label class="text-[10px] font-bold text-slate-500">POSTO/EXPOSIÇÃO</label><input id="ePosto" class="w-full px-3 py-2 text-sm border rounded uppercase bg-slate-50"></div>
+      <div><label class="text-[10px] font-bold text-slate-500">FILIAL (pasta principal)</label><input id="eFilial" maxlength="3" placeholder="Ex: FLO" class="w-full px-3 py-2 text-sm border rounded uppercase bg-slate-50"></div>
+      <div><label class="text-[10px] font-bold text-slate-500">POSTO/EXPOSIÇÃO (subpasta)</label><input id="ePosto" placeholder="Ex: POA" class="w-full px-3 py-2 text-sm border rounded uppercase bg-slate-50"></div>
     </div>
     <div><label class="text-[10px] font-bold text-slate-500">TIPO DE EVENTO</label>
       <select id="eTipo" onchange="checkOutrosEv()" class="w-full px-3 py-2 text-sm border rounded bg-slate-50 mb-2"><option>Inauguração</option><option>Reinauguração</option><option>Mudança de status</option><option>Pc-á-pc</option><option>Impressoras</option><option>Networking</option><option value="Outros">Outros...</option></select>
@@ -88,23 +88,36 @@ body.tv #titulo{font-size:2.5rem}
     <div><label class="text-[10px] font-bold text-slate-500">EQUIPE <span id="eCont" class="text-emerald-600"></span></label>
       <input id="eBusca" oninput="renderTecs()" placeholder="Buscar técnico..." class="w-full px-3 py-2 text-sm border rounded bg-slate-50 mb-2">
       <div id="eTecs" class="max-h-40 overflow-auto custom-scrollbar border rounded"></div></div>
-    <p class="text-[11px] text-slate-500">Ao salvar, a viagem (projeto de horas) é criada para cada técnico selecionado e o dashboard atualiza na hora para todos.</p>
+    <p class="text-[11px] text-slate-500">O suporte só poderá lançar horas entre a <b>data da saída</b> e a <b>data do evento</b>. A viagem aparece para cada técnico dentro da pasta da filial, na subpasta do posto.</p>
     <div class="flex justify-end gap-2"><button onclick="fechar('mEvento')" class="px-4 py-2 text-sm font-bold text-slate-500">Cancelar</button><button id="btnSalvarEv" onclick="salvarEvento()" class="px-4 py-2 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded">Salvar</button></div>
   </div>
 </div>
 
-<!-- MODAL ARQUIVOS -->
+<!-- MODAL ARQUIVOS (calendários anteriores) -->
 <div id="mArq" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-  <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-md border-t-4 border-blue-600 space-y-3">
-    <h3 class="text-lg font-bold"><i class="fa-solid fa-folder-open text-blue-600 mr-2"></i>Planilhas</h3>
-    <div id="arqLista" class="max-h-72 overflow-auto custom-scrollbar space-y-2"></div>
-    <div class="flex justify-end"><button onclick="fechar('mArq')" class="px-4 py-2 text-sm font-bold text-slate-500">Fechar</button></div>
+  <div class="bg-white rounded-xl shadow-xl w-full max-w-3xl border-t-4 border-blue-600 max-h-[92vh] flex flex-col pop">
+    <div class="px-6 pt-5 pb-3 border-b flex items-center justify-between">
+      <div><h3 class="text-lg font-bold"><i class="fa-solid fa-folder-open text-blue-600 mr-2"></i>Arquivo de calendários</h3><p class="text-xs text-slate-500">Calendários organizados por ano. O calendário <b>ativo</b> é o que o suporte e as TVs enxergam.</p></div>
+      <button onclick="fechar('mArq')" class="text-slate-400 hover:text-slate-700 text-xl"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div id="arqLista" class="p-6 overflow-auto custom-scrollbar space-y-6"></div>
+  </div>
+</div>
+
+<!-- MODAL DETALHES DA VIAGEM -->
+<div id="mDet" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-xl shadow-xl w-full max-w-4xl border-t-4 border-indigo-600 max-h-[92vh] flex flex-col pop">
+    <div class="px-6 pt-5 pb-3 border-b flex items-start justify-between gap-4">
+      <div><h3 class="text-lg font-bold"><i class="fa-solid fa-eye text-indigo-600 mr-2"></i><span id="detTitulo">Detalhes da viagem</span></h3><p id="detSub" class="text-xs text-slate-500 mt-1"></p></div>
+      <button onclick="fechar('mDet')" class="text-slate-400 hover:text-slate-700 text-xl"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div id="detCorpo" class="p-6 overflow-auto custom-scrollbar space-y-5"></div>
   </div>
 </div>
 
 <!-- MODAL USUÁRIO -->
 <div id="mUser" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-  <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-sm border-t-4 border-slate-800 space-y-3">
+  <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-sm border-t-4 border-slate-800 space-y-3 pop">
     <h3 class="text-lg font-bold"><i class="fa-solid fa-user-plus mr-2"></i>Criar usuário</h3>
     <div class="grid grid-cols-2 gap-3"><input id="uNomeN" placeholder="Nome" class="px-3 py-2 text-sm border rounded bg-slate-50"><input id="uSobN" placeholder="Sobrenome" class="px-3 py-2 text-sm border rounded bg-slate-50"></div>
     <select id="uEquipe" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"><option value="-">Sem equipe</option><option value="Anna">Equipe Anna</option><option value="Didi">Equipe Didi</option></select>
@@ -117,7 +130,6 @@ body.tv #titulo{font-size:2.5rem}
 <script>
 const API_URL = "https://script.google.com/macros/s/AKfycbyv6rztF_a5ePHzRhzCMJDawDOHhF-le_3MgvoeMY2WUGjVRQBPmt2cSuV6Mp71MGnpUQ/exec";
 const SESSAO_MS = 4 * 60 * 60 * 1000, POLL_MS = 8000;
-const MESES = ['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO','JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
 const VIAGENS_URL = "https://viagens-gs.vercel.app/";
 
 // ===== LOGIN ÚNICO ENTRE SISTEMAS (recebe a sessão vinda do viagens-gs) =====
@@ -142,6 +154,8 @@ function irParaViagens() {
   window.location.href = VIAGENS_URL + '#sso=' + payload;
 }
 
+const MESES = ['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO','JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
+const DIAS = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 const RX_GESTAO = /Coordena|Ger[eê]ncia/i;
 const TIPOS_FIXOS = ['Inauguração','Reinauguração','Mudança de status','Pc-á-pc','Impressoras','Networking'];
 const $ = id => document.getElementById(id);
@@ -150,7 +164,22 @@ let user = null, planilhas = [], planId = '', eventos = [], usuarios = [], tecSe
 const isGestao = () => !!user && RX_GESTAO.test(user.nivel || '');
 const isMonitor = () => !!user && /Monitor/i.test(user.nivel || '');
 
+// ===== avisos e confirmações PERSONALIZADOS (sem alert/confirm/prompt do navegador) =====
 function toast(msg, type = 'info') { const t = document.createElement('div'); t.className = 'toast t-' + type; t.textContent = msg; $('toasts').appendChild(t); setTimeout(() => t.remove(), 4000); }
+function askConfirm(msg, o = {}) {
+  return new Promise(res => {
+    const tipo = o.tipo || 'info';
+    const cfg = { danger: ['bg-red-500', 'bg-red-600 hover:bg-red-700', 'fa-trash-can'], warning: ['bg-amber-500', 'bg-amber-500 hover:bg-amber-600', 'fa-triangle-exclamation'], info: ['bg-blue-500', 'bg-blue-600 hover:bg-blue-700', 'fa-circle-info'] }[tipo];
+    const ov = document.createElement('div');
+    ov.className = 'fixed inset-0 z-[9998] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4';
+    ov.innerHTML = `<div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden pop"><div class="px-6 py-5 flex items-center gap-3 border-b"><div class="${cfg[0]} text-white w-11 h-11 rounded-xl flex items-center justify-center text-xl"><i class="fa-solid ${o.icon || cfg[2]}"></i></div><h3 class="text-lg font-bold text-slate-800">${esc(o.title || 'Confirmar ação')}</h3></div><div class="px-6 py-5 text-sm text-slate-600 leading-relaxed">${msg}</div><div class="px-6 pb-6 flex justify-end gap-3"><button data-r="0" class="px-4 py-2.5 rounded-lg text-sm font-semibold bg-slate-100 hover:bg-slate-200 text-slate-600">${esc(o.cancel || 'Cancelar')}</button><button data-r="1" class="px-4 py-2.5 rounded-lg text-sm font-semibold text-white ${cfg[1]}">${esc(o.ok || 'Confirmar')}</button></div></div>`;
+    const fim = v => { document.removeEventListener('keydown', esc_); ov.remove(); res(v); };
+    const esc_ = e => { if (e.key === 'Escape') fim(false); };
+    document.addEventListener('keydown', esc_);
+    ov.addEventListener('click', e => { if (e.target === ov) fim(false); const b = e.target.closest('button[data-r]'); if (b) fim(b.dataset.r === '1'); });
+    document.body.appendChild(ov);
+  });
+}
 async function post(d) { try { const r = await fetch(API_URL, { method: 'POST', body: JSON.stringify(d) }); return await r.json(); } catch (e) { return null; } }
 const fechar = id => $(id).classList.add('hidden');
 
@@ -158,6 +187,7 @@ const fechar = id => $(id).classList.add('hidden');
 const p2 = n => String(n).padStart(2, '0');
 function hojeISO() { const d = new Date(); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); }
 const fmt = iso => iso ? iso.split('-').reverse().join('/') : '';
+const diaSem = iso => DIAS[new Date(iso + 'T00:00:00').getDay()];
 // Pendente -> dia da saída: trânsito -> depois: andamento -> dia do evento: concluindo -> dia seguinte: concluído
 function statusEvento(ev) {
   const h = hojeISO();
@@ -167,9 +197,9 @@ function statusEvento(ev) {
   if (ev.dataSaida && h > ev.dataSaida) return { txt: 'Projeto em andamento', cls: 'text-amber-600' };
   return { txt: 'Pendente', cls: 'text-red-600' };
 }
+function nomeUsuario(login) { const u = usuarios.find(x => String(x.login).toLowerCase() === String(login).toLowerCase()); return u ? u.nome : login; }
 function primeiroNome(login) {
-  const u = usuarios.find(x => String(x.login).toLowerCase() === String(login).toLowerCase());
-  const n = u ? String(u.nome).split(' ')[0] : String(login).split('.')[0];
+  const n = String(nomeUsuario(login)).split(/[ .]/)[0];
   return n.charAt(0).toUpperCase() + n.slice(1).toLowerCase();
 }
 
@@ -207,8 +237,7 @@ async function iniciar() {
 function iniciarAutoScroll() {
   let dir = 1, pausa = 0;
   tvTimer = setInterval(() => {
-    const w = document.documentElement;
-    const max = w.scrollHeight - w.clientHeight;
+    const w = document.documentElement, max = w.scrollHeight - w.clientHeight;
     if (max <= 5) return;
     if (pausa > 0) { pausa--; return; }
     const y = window.scrollY + dir;
@@ -225,18 +254,18 @@ async function carregar() {
   if (sig === lastSig) return; lastSig = sig;
   render();
 }
+const recarregar = () => { lastSig = ''; return carregar(); };
 
+// ===== tabela =====
 function render() {
   const pl = planilhas.find(p => p.id === planId);
   const ev = eventos.slice().sort((a, b) => a.dataEvento.localeCompare(b.dataEvento));
-  const meses = [...new Set(ev.map(e => +e.dataEvento.slice(5, 7)).filter(Boolean))].map(m => MESES[m - 1]);
-  const ano = ev.length ? ev[0].dataEvento.slice(0, 4) : new Date().getFullYear();
-  $('titulo').textContent = pl ? 'Calendário com eventos para ' + (pl.titulo || (meses.join(' e ') + ' de ' + ano)) : 'Nenhuma planilha ativa';
-  const av = $('aviso');
-  if (isGestao() && pl && !pl.ativa) { av.textContent = 'Você está vendo uma planilha que NÃO está exibida para o suporte. Use "Arquivos" > Ativar para publicá-la.'; av.classList.remove('hidden'); }
-  else if (isGestao() && !pl) { av.textContent = 'Crie uma planilha em "Nova planilha" para começar.'; av.classList.remove('hidden'); }
+  // título padrão vem do banco: "Calendário com eventos para {mês início} e {mês fim} de {ano}"
+  $('titulo').textContent = pl ? (pl.titulo || 'Calendário com eventos (aguardando o primeiro evento)') : 'Nenhuma planilha ativa';
+  const av = $('aviso'), g = isGestao();
+  if (g && pl && !pl.ativa) { av.textContent = 'Você está vendo um calendário que NÃO está exibido para o suporte. Em "Arquivos" use Ativar para publicá-lo.'; av.classList.remove('hidden'); }
+  else if (g && !pl) { av.textContent = 'Clique em "Novo evento" ou "Nova planilha" para começar.'; av.classList.remove('hidden'); }
   else av.classList.add('hidden');
-  const g = isGestao();
   $('thead').innerHTML = ['Filial','Posto/Exposição','Tipo de evento','Data','Envio dos Equip.','Equipe','Data da saída','Status'].concat(g ? ['Nº Viagem','Ações'] : []).map(h => `<th class="px-3 py-3 font-bold">${h}</th>`).join('');
   let html = '', mesAtual = null;
   const cols = g ? 10 : 8;
@@ -247,8 +276,13 @@ function render() {
     mesAtual = m;
     const s = statusEvento(e);
     const equipe = e.equipe.split(',').filter(Boolean).map(primeiroNome).join(' / ');
-    html += `<tr class="fade-in bg-white font-semibold"><td class="px-3 py-2 font-black">${esc(e.filial)}</td><td class="px-3 py-2">${esc(e.posto)}</td><td class="px-3 py-2">${esc(e.tipo)}</td><td class="px-3 py-2 font-bold" style="background:#92d050">${fmt(e.dataEvento)}</td><td class="px-3 py-2 font-bold" style="background:#fff2cc">${fmt(e.dataEnvio)}</td><td class="px-3 py-2 font-bold">${esc(equipe)}</td><td class="px-3 py-2 font-bold" style="background:#ffc000">${fmt(e.dataSaida)}</td><td class="px-3 py-2 font-bold ${s.cls}">${esc(s.txt)}</td>`;
-    if (g) html += `<td class="px-3 py-2 font-mono text-xs">${esc(e.numViagem || '-')}</td><td class="px-3 py-2 whitespace-nowrap"><button onclick="abrirEvento('${e.id}')" class="text-slate-400 hover:text-orange-500 mr-3"><i class="fa-solid fa-pen"></i></button><button onclick="excluirEvento('${e.id}')" class="text-slate-400 hover:text-red-500"><i class="fa-solid fa-trash"></i></button></td>`;
+    const lock = g && e.fechada ? ' <i class="fa-solid fa-lock text-slate-400 text-xs" title="Viagem fechada"></i>' : '';
+    html += `<tr class="fade-in bg-white font-semibold"><td class="px-3 py-2 font-black">${esc(e.filial)}</td><td class="px-3 py-2">${esc(e.posto)}</td><td class="px-3 py-2">${esc(e.tipo)}</td><td class="px-3 py-2 font-bold" style="background:#92d050">${fmt(e.dataEvento)}</td><td class="px-3 py-2 font-bold" style="background:#fff2cc">${fmt(e.dataEnvio)}</td><td class="px-3 py-2 font-bold">${esc(equipe)}</td><td class="px-3 py-2 font-bold" style="background:#ffc000">${fmt(e.dataSaida)}</td><td class="px-3 py-2 font-bold ${s.cls}">${esc(s.txt)}${lock}</td>`;
+    if (g) html += `<td class="px-3 py-2 font-mono text-xs">${esc(e.numViagem || '-')}</td><td class="px-3 py-2 whitespace-nowrap">
+      <button onclick="verDetalhes('${e.id}')" class="text-slate-400 hover:text-indigo-600 mr-3" title="Ver detalhes"><i class="fa-solid fa-eye"></i></button>
+      ${e.fechada ? '<span class="text-slate-300 mr-3" title="Viagem já fechada"><i class="fa-solid fa-lock"></i></span>' : `<button onclick="fecharViagem('${e.id}')" class="text-slate-400 hover:text-emerald-600 mr-3" title="Fechar viagem"><i class="fa-solid fa-circle-check"></i></button>`}
+      <button onclick="abrirEvento('${e.id}')" class="text-slate-400 hover:text-orange-500 mr-3" title="Editar"><i class="fa-solid fa-pen"></i></button>
+      <button onclick="excluirEvento('${e.id}')" class="text-slate-400 hover:text-red-500" title="Excluir"><i class="fa-solid fa-trash"></i></button></td>`;
     html += '</tr>';
   });
   $('tbody').innerHTML = html;
@@ -256,8 +290,14 @@ function render() {
 
 // ===== evento =====
 function checkOutrosEv() { const o = $('eTipo').value === 'Outros'; $('eOutros').classList.toggle('hidden', !o); if (!o) $('eOutros').value = ''; }
-function abrirEvento(id) {
-  if (!planId) return toast('Crie uma planilha primeiro.', 'error');
+async function garantirPlanilha() {
+  if (planId) return true;
+  const r = await post({ action: 'dashNovaPlanilha', nivel: user.nivel, login: user.login });
+  if (r && r.success) { planId = r.id; return true; }
+  toast('Não foi possível criar a planilha.', 'error'); return false;
+}
+async function abrirEvento(id) {
+  if (!(await garantirPlanilha())) return;
   const e = (id && eventos.find(x => x.id === id)) || {};
   $('mEvTitulo').textContent = id ? 'Editar evento' : 'Novo evento';
   $('eId').value = e.id || ''; $('eFilial').value = e.filial || ''; $('ePosto').value = e.posto || '';
@@ -283,42 +323,91 @@ function renderTecs() {
 async function salvarEvento() {
   let tipo = $('eTipo').value; if (tipo === 'Outros') tipo = $('eOutros').value.trim();
   const ev = { id: $('eId').value, filial: $('eFilial').value.trim().toUpperCase(), posto: $('ePosto').value.trim().toUpperCase(), tipo, dataEnvio: $('eEnvio').value, dataSaida: $('eSaida').value, dataEvento: $('eData').value, numViagem: $('eNum').value.trim(), equipe: [...tecSel].join(',') };
-  if (!ev.filial || !ev.tipo || !ev.dataEvento || !ev.dataSaida || !tecSel.size) return toast('Informe filial, tipo, datas de saída/evento e ao menos um técnico.', 'error');
+  if (!ev.filial || !ev.posto || !ev.tipo || !ev.dataEvento || !ev.dataSaida || !tecSel.size) return toast('Informe filial, posto, tipo, datas de saída/evento e ao menos um técnico.', 'error');
   if (ev.dataSaida > ev.dataEvento) return toast('A data da saída não pode ser depois da data do evento.', 'error');
   const b = $('btnSalvarEv'); b.disabled = true; busy++;
   const r = await post({ action: 'dashSalvarEvento', nivel: user.nivel, login: user.login, planilhaId: planId, evento: ev });
   busy--; b.disabled = false;
-  if (r && r.success) { fechar('mEvento'); toast('Evento salvo e viagens geradas para a equipe.', 'success'); lastSig = ''; carregar(); }
+  if (r && r.success) { fechar('mEvento'); toast('Evento salvo. As viagens do suporte foram geradas/atualizadas.', 'success'); recarregar(); }
   else toast((r && r.message) || 'Falha ao salvar.', 'error');
 }
 async function excluirEvento(id) {
-  if (!confirm('Excluir este evento do dashboard?')) return;
-  const r = await post({ action: 'dashExcluirEvento', nivel: user.nivel, id });
-  if (r && r.success) { toast('Evento excluído.', 'success'); lastSig = ''; carregar(); } else toast('Falha ao excluir.', 'error');
+  const e = eventos.find(x => x.id === id); if (!e) return;
+  const ok = await askConfirm(`Excluir o evento <b>${esc(e.filial)} / ${esc(e.posto)}</b> (${esc(e.tipo)})?<br><br>A <b>viagem dos técnicos</b> no sistema de Viagens também será apagada, junto com as horas já lançadas nela.`, { title: 'Excluir evento', ok: 'Sim, excluir', tipo: 'danger' });
+  if (!ok) return;
+  busy++; const r = await post({ action: 'dashExcluirEvento', nivel: user.nivel, id }); busy--;
+  if (r && r.success) { toast('Evento e viagens do suporte excluídos.', 'success'); recarregar(); } else toast((r && r.message) || 'Falha ao excluir.', 'error');
+}
+async function fecharViagem(id) {
+  const e = eventos.find(x => x.id === id); if (!e) return;
+  const ok = await askConfirm(`Fechar a viagem <b>${esc(e.filial)} / ${esc(e.posto)}</b>?<br><br>Os técnicos não poderão mais lançar, editar ou excluir horas. (Se necessário, a Gestão pode reabrir pelo sistema de Viagens.)<br><span class="text-xs text-slate-400">Se você não fechar, o sistema fecha sozinho 3 dias depois que o status virar "Concluído".</span>`, { title: 'Fechar viagem', ok: 'Sim, fechar', tipo: 'warning', icon: 'fa-lock' });
+  if (!ok) return;
+  busy++; const r = await post({ action: 'dashFecharViagem', nivel: user.nivel, id }); busy--;
+  if (r && r.success) { toast('Viagem fechada.', 'success'); recarregar(); } else toast((r && r.message) || 'Falha ao fechar.', 'error');
 }
 
-// ===== planilhas =====
+// ===== detalhes da viagem (horas feitas até agora) =====
+const tMin = t => { if (!t) return 0; const [h, m] = String(t).split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+const mHm = m => `${m < 0 ? '-' : ''}${p2(Math.floor(Math.abs(m) / 60))}:${p2(Math.floor(Math.abs(m) % 60))}`;
+// domingo (sem feriado) é guardado com as horas dobradas: aqui mostramos a hora extra real feita
+const extraFeita = t => (!t.feriado && new Date(t.data + 'T00:00:00').getDay() === 0) ? Math.round(tMin(t.horasExtras) / 2) : tMin(t.horasExtras);
+const ST_BADGE = { ABERTO: ['Aberto', 'bg-blue-100 text-blue-700'], FECHADA: ['Fechada', 'bg-emerald-100 text-emerald-700'], ARQUIVADA: ['Arquivada', 'bg-slate-200 text-slate-600'] };
+
+async function verDetalhes(id) {
+  $('detTitulo').textContent = 'Detalhes da viagem'; $('detSub').textContent = '';
+  $('detCorpo').innerHTML = '<p class="text-center text-slate-400 py-10"><i class="fa-solid fa-spinner fa-spin mr-1"></i> Carregando...</p>';
+  $('mDet').classList.remove('hidden');
+  const r = await post({ action: 'dashDetalhes', nivel: user.nivel, id });
+  if (!r || !r.success) { $('detCorpo').innerHTML = `<p class="text-center text-red-500 py-10">${esc((r && r.message) || 'Erro ao carregar.')}</p>`; return; }
+  const ev = r.evento;
+  $('detTitulo').textContent = `${ev.filial} › ${ev.posto} — ${ev.tipo}`;
+  $('detSub').textContent = `Período liberado para lançamento: ${fmt(ev.dataSaida)} a ${fmt(ev.dataEvento)}${ev.fechada ? ' • Viagem fechada' : ''}`;
+  let totT = 0, totE = 0, totD = 0;
+  const cards = r.tecnicos.map(t => {
+    const trips = t.trips.slice().sort((a, b) => a.data.localeCompare(b.data));
+    const trab = trips.reduce((a, x) => a + tMin(x.totalHoras), 0), ext = trips.reduce((a, x) => a + extraFeita(x), 0);
+    totT += trab; totE += ext; totD += trips.length;
+    const st = ST_BADGE[t.status] || ST_BADGE.ABERTO;
+    const linhas = trips.length ? trips.map(x => {
+      const pausa = (x.inicioAlmoco && x.fimAlmoco) ? `${x.inicioAlmoco} / ${x.fimAlmoco}` : 'Sem pausa';
+      return `<tr class="border-b"><td class="px-3 py-2 text-sm">${fmt(x.data)} (${diaSem(x.data)})${x.feriado ? ' <span class="bg-amber-100 text-amber-700 text-[10px] font-bold px-1.5 py-0.5 rounded border border-amber-300">FERIADO</span>' : ''}</td><td class="px-3 py-2 text-center font-mono text-xs">${esc(x.entrada)} - ${pausa} - ${esc(x.saida)}</td><td class="px-3 py-2 text-center font-mono text-sm">${esc(x.totalHoras || '00:00')}</td><td class="px-3 py-2 text-center font-mono text-sm font-bold text-blue-600">${mHm(extraFeita(x))}</td></tr>`;
+    }).join('') : '<tr><td colspan="4" class="p-5 text-center text-slate-400 text-sm">Nenhum apontamento lançado ainda.</td></tr>';
+    return `<div class="border rounded-xl overflow-hidden"><div class="bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3 border-b"><div class="flex items-center gap-3"><div class="w-9 h-9 rounded-full bg-slate-800 text-emerald-400 flex items-center justify-center font-black">${esc(String(nomeUsuario(t.login)).charAt(0).toUpperCase())}</div><div><p class="text-sm font-bold leading-tight">${esc(nomeUsuario(t.login))}</p><p class="text-[11px] text-slate-400 font-mono">${esc(t.login)}</p></div><span class="${st[1]} text-[10px] font-bold px-2 py-0.5 rounded uppercase">Horas: ${st[0]}</span></div><div class="flex gap-5 text-right"><div><p class="text-[10px] uppercase font-bold text-slate-400">Dias</p><p class="text-lg font-black font-mono">${trips.length}</p></div><div><p class="text-[10px] uppercase font-bold text-slate-400">Trabalhadas</p><p class="text-lg font-black font-mono">${mHm(trab)}</p></div><div><p class="text-[10px] uppercase font-bold text-slate-400">Extras feitas</p><p class="text-lg font-black font-mono text-blue-600">${mHm(ext)}</p></div></div></div><div class="overflow-auto max-h-60 custom-scrollbar"><table class="min-w-full text-left"><thead class="bg-white sticky top-0 border-b"><tr><th class="px-3 py-2 text-[10px] uppercase text-slate-500">Data</th><th class="px-3 py-2 text-[10px] uppercase text-slate-500 text-center">Entrada / Pausa / Saída</th><th class="px-3 py-2 text-[10px] uppercase text-slate-500 text-center">Trabalhadas</th><th class="px-3 py-2 text-[10px] uppercase text-blue-600 text-center">Extra feita</th></tr></thead><tbody>${linhas}</tbody></table></div></div>`;
+  }).join('');
+  const tile = (l, v, c) => `<div class="bg-slate-900 rounded-xl px-4 py-3"><p class="text-[10px] font-bold uppercase tracking-wider text-slate-400">${l}</p><p class="text-2xl font-black font-mono ${c}">${v}</p></div>`;
+  $('detCorpo').innerHTML = `<div class="grid grid-cols-3 gap-3">${tile('Técnicos', r.tecnicos.length, 'text-white')}${tile('Total trabalhado', mHm(totT), 'text-emerald-400')}${tile('Total de extras feitas', mHm(totE), 'text-sky-400')}</div>${cards}`;
+}
+
+// ===== planilhas / arquivos =====
 async function novaPlanilha() {
-  const t = prompt('Título da nova planilha (ex.: NOVEMBRO e DEZEMBRO de 2026):'); if (!t) return;
-  const r = await post({ action: 'dashNovaPlanilha', nivel: user.nivel, login: user.login, titulo: t });
-  if (r && r.success) { planId = r.id; toast('Planilha criada e ativada.', 'success'); lastSig = ''; carregar(); } else toast('Falha ao criar.', 'error');
+  const ok = await askConfirm('Criar uma <b>nova planilha</b> vazia?<br><br>Ela passa a ser a exibida para o suporte e para as TVs. A planilha atual continua guardada em <b>Arquivos</b>. O título é gerado sozinho a partir das datas dos eventos.', { title: 'Nova planilha', ok: 'Criar planilha', icon: 'fa-file-circle-plus' });
+  if (!ok) return;
+  const r = await post({ action: 'dashNovaPlanilha', nivel: user.nivel, login: user.login });
+  if (r && r.success) { planId = r.id; toast('Nova planilha criada e ativada.', 'success'); recarregar(); } else toast('Falha ao criar.', 'error');
 }
-async function renomearPlanilha() {
-  const pl = planilhas.find(p => p.id === planId); if (!pl) return toast('Nenhuma planilha selecionada.', 'error');
-  const t = prompt('Novo título:', pl.titulo); if (!t) return;
-  const r = await post({ action: 'dashRenomearPlanilha', nivel: user.nivel, id: planId, titulo: t });
-  if (r && r.success) { toast('Título alterado.', 'success'); lastSig = ''; carregar(); } else toast('Falha ao renomear.', 'error');
-}
+function periodoPlan(p) { return p.ini ? (p.ini === p.fim ? fmt(p.ini) : `${fmt(p.ini)} a ${fmt(p.fim)}`) : 'Sem eventos'; }
 function abrirArquivos() {
-  $('arqLista').innerHTML = planilhas.map(p => `<div class="flex items-center justify-between border rounded p-3 ${p.id === planId ? 'border-blue-500 bg-blue-50' : ''}"><div><p class="text-sm font-bold">${esc(p.titulo)}</p><p class="text-[10px] text-slate-500">${p.ativa ? 'Exibida para o suporte' : 'Arquivada (só Gestão vê)'}</p></div><div class="flex gap-3"><button onclick="verPlanilha('${p.id}')" class="text-xs font-bold text-blue-600">Ver</button>${p.ativa ? '' : `<button onclick="ativarPlanilha('${p.id}')" class="text-xs font-bold text-emerald-600">Ativar</button>`}<button onclick="excluirPlanilha('${p.id}')" class="text-xs font-bold text-red-600">Excluir</button></div></div>`).join('') || '<p class="text-sm text-slate-400 text-center">Nenhuma planilha.</p>';
+  const grupos = {};
+  planilhas.slice().sort((a, b) => (b.ini || '9999').localeCompare(a.ini || '9999')).forEach(p => { const ano = p.ini ? p.ini.slice(0, 4) : 'Sem data'; (grupos[ano] = grupos[ano] || []).push(p); });
+  const anos = Object.keys(grupos).sort().reverse();
+  $('arqLista').innerHTML = anos.map(ano => `<section><div class="flex items-center gap-3 mb-3"><h4 class="text-sm font-black text-slate-700 tracking-wider">${esc(ano)}</h4><div class="flex-1 border-t border-slate-200"></div><span class="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">${grupos[ano].length}</span></div><div class="grid grid-cols-1 sm:grid-cols-2 gap-3">${grupos[ano].map(p => {
+    const atual = p.id === planId;
+    return `<div class="rounded-xl border-l-4 ${p.ativa ? 'border-l-emerald-500 bg-emerald-50/40' : 'border-l-slate-300 bg-white'} border ${atual ? 'ring-2 ring-blue-500' : 'border-slate-200'} p-4 shadow-sm flex flex-col justify-between"><div><div class="flex items-start justify-between gap-2"><p class="text-sm font-bold text-slate-800 leading-snug">${esc(p.titulo ? p.titulo.replace('Calendário com eventos para ', '') : 'Planilha sem eventos')}</p><span class="shrink-0 ${p.ativa ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'} text-[10px] font-bold px-2 py-0.5 rounded uppercase">${p.ativa ? 'Ativa' : 'Arquivada'}</span></div><p class="text-xs text-slate-500 mt-2"><i class="fa-regular fa-calendar mr-1"></i>${periodoPlan(p)}</p><p class="text-xs text-slate-500 mt-1"><i class="fa-solid fa-plane-departure mr-1"></i>${p.qtd} evento${p.qtd === 1 ? '' : 's'}</p></div><div class="flex gap-2 mt-4 pt-3 border-t"><button onclick="verPlanilha('${p.id}')" class="flex-1 text-xs font-bold bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg py-1.5"><i class="fa-solid fa-eye mr-1"></i>Abrir</button>${p.ativa ? '' : `<button onclick="ativarPlanilha('${p.id}')" class="flex-1 text-xs font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg py-1.5"><i class="fa-solid fa-bullhorn mr-1"></i>Ativar</button>`}<button onclick="excluirPlanilha('${p.id}')" class="text-xs font-bold bg-red-50 hover:bg-red-100 text-red-600 rounded-lg px-3 py-1.5" title="Excluir"><i class="fa-solid fa-trash"></i></button></div></div>`;
+  }).join('')}</div></section>`).join('') || '<p class="text-sm text-slate-400 text-center py-8">Nenhuma planilha ainda.</p>';
   $('mArq').classList.remove('hidden');
 }
-function verPlanilha(id) { planId = id; lastSig = ''; fechar('mArq'); carregar(); }
-async function ativarPlanilha(id) { await post({ action: 'dashAtivarPlanilha', nivel: user.nivel, id }); planId = id; lastSig = ''; fechar('mArq'); toast('Planilha ativada para o suporte.', 'success'); carregar(); }
+function verPlanilha(id) { planId = id; fechar('mArq'); recarregar(); }
+async function ativarPlanilha(id) {
+  const ok = await askConfirm('Ativar este calendário?<br><br>Ele passa a ser o exibido para o suporte e para as TVs.', { title: 'Ativar calendário', ok: 'Sim, ativar', icon: 'fa-bullhorn' });
+  if (!ok) return;
+  await post({ action: 'dashAtivarPlanilha', nivel: user.nivel, id }); planId = id; fechar('mArq'); toast('Calendário ativado para o suporte.', 'success'); recarregar();
+}
 async function excluirPlanilha(id) {
-  if (!confirm('Excluir esta planilha e todos os eventos dela?')) return;
+  const p = planilhas.find(x => x.id === id); if (!p) return;
+  const ok = await askConfirm(`Excluir o calendário <b>${esc(p.titulo ? p.titulo.replace('Calendário com eventos para ', '') : 'sem eventos')}</b> com ${p.qtd} evento(s)?<br><br>Todas as <b>viagens dos técnicos</b> ligadas a esses eventos também serão apagadas, com as horas lançadas.`, { title: 'Excluir calendário', ok: 'Sim, excluir tudo', tipo: 'danger' });
+  if (!ok) return;
   const r = await post({ action: 'dashExcluirPlanilha', nivel: user.nivel, id });
-  if (r && r.success) { if (planId === id) planId = ''; fechar('mArq'); toast('Planilha excluída.', 'success'); lastSig = ''; carregar(); } else toast('Falha ao excluir.', 'error');
+  if (r && r.success) { if (planId === id) planId = ''; fechar('mArq'); toast('Calendário excluído.', 'success'); recarregar(); } else toast('Falha ao excluir.', 'error');
 }
 
 // ===== usuário =====
