@@ -23,6 +23,11 @@ body.tv #titulo{font-size:2.5rem}
 <body class="bg-slate-100 min-h-screen font-sans text-slate-800">
 <div id="toasts"></div>
 
+<!-- SPLASH (carregando sessão salva) -->
+<div id="splash" class="fixed inset-0 bg-slate-900 flex items-center justify-center z-[60] text-white">
+  <div class="text-center"><i class="fa-solid fa-spinner fa-spin text-3xl"></i><p class="text-sm mt-3 font-semibold">Carregando...</p></div>
+</div>
+
 <!-- LOGIN -->
 <div id="authView" class="hidden flex items-center justify-center min-h-screen bg-slate-900">
   <form id="loginForm" class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md border-t-4 border-blue-600 space-y-4">
@@ -33,7 +38,7 @@ body.tv #titulo{font-size:2.5rem}
     <button id="btnLogin" type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded transition flex items-center justify-center gap-2">
       <span id="loginTxt">Acessar</span>
     </button>
-    <div id="loginMsg" class="hidden rounded-lg px-4 py-3 text-sm font-semibold flex items-center gap-2"></div>
+    <div id="loginMsg" style="display:none" class="rounded-lg px-4 py-3 text-sm font-semibold items-center gap-2"></div>
   </form>
 </div>
 
@@ -45,6 +50,7 @@ body.tv #titulo{font-size:2.5rem}
     <button onclick="abrirArquivos()" class="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-sm font-bold"><i class="fa-solid fa-folder-open mr-2"></i>Arquivos</button>
     <button onclick="novaPlanilha()" class="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-sm font-bold"><i class="fa-solid fa-file-circle-plus mr-2"></i>Nova planilha</button>
     <button onclick="abrirUsuario()" class="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-sm font-bold"><i class="fa-solid fa-user-plus mr-2"></i>Criar usuário</button>
+    <button onclick="abrirUsuarios()" class="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-sm font-bold"><i class="fa-solid fa-users-gear mr-2"></i>Usuários</button>
   </aside>
   <div class="flex-1 min-w-0">
     <header class="bg-slate-900 border-b border-slate-700 h-14 px-4 flex items-center justify-between sticky top-0 z-40">
@@ -106,7 +112,7 @@ body.tv #titulo{font-size:2.5rem}
   </div>
 </div>
 
-<!-- MODAL USUÁRIO -->
+<!-- MODAL CRIAR USUÁRIO -->
 <div id="mUser" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
   <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-sm border-t-4 border-slate-800 space-y-3 pop">
     <h3 class="text-lg font-bold"><i class="fa-solid fa-user-plus mr-2"></i>Criar usuário</h3>
@@ -115,6 +121,34 @@ body.tv #titulo{font-size:2.5rem}
     <select id="uNivel" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"><option>Suporte NN</option><option>Suporte N1</option><option>Suporte N2</option><option>Suporte N3</option><option>Analista de Suporte - N1</option><option>Analista de Suporte N2</option><option>Coordenação GS</option><option>Gerência GS</option><option>Monitor</option></select>
     <input id="uSenha" type="password" placeholder="Senha" class="w-full px-3 py-2 text-sm border rounded bg-slate-50">
     <div class="flex justify-end gap-2"><button onclick="fechar('mUser')" class="px-4 py-2 text-sm font-bold text-slate-500">Cancelar</button><button onclick="criarUsuario()" class="px-4 py-2 text-sm font-bold bg-slate-800 text-white rounded">Criar</button></div>
+  </div>
+</div>
+
+<!-- MODAL LISTA DE USUÁRIOS -->
+<div id="mUsers" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-xl shadow-xl w-full max-w-4xl border-t-4 border-slate-800 max-h-[92vh] flex flex-col pop">
+    <div class="px-6 pt-5 pb-3 border-b flex items-center justify-between gap-3">
+      <div><h3 class="text-lg font-bold"><i class="fa-solid fa-users-gear mr-2"></i>Usuários</h3><p class="text-xs text-slate-500">Altere nome, equipe, nível e senha. O login não muda.</p></div>
+      <button onclick="fechar('mUsers')" class="text-slate-400 hover:text-slate-700 text-xl"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="px-6 pt-4"><input id="usBusca" oninput="renderUsuarios()" placeholder="Buscar por nome, login ou nível..." class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></div>
+    <div id="usLista" class="p-6 overflow-auto custom-scrollbar"></div>
+  </div>
+</div>
+
+<!-- MODAL EDITAR USUÁRIO -->
+<div id="mUserEdit" class="hidden fixed inset-0 bg-black/50 z-[55] flex items-center justify-center p-4">
+  <div class="bg-white p-6 rounded-xl shadow-xl w-full max-w-sm border-t-4 border-orange-500 space-y-3 pop">
+    <h3 class="text-lg font-bold"><i class="fa-solid fa-user-pen text-orange-500 mr-2"></i>Editar usuário</h3>
+    <div><label class="text-[10px] font-bold text-slate-500">LOGIN</label><input id="ueLogin" readonly class="w-full px-3 py-2 text-sm border rounded bg-slate-100 font-mono text-slate-500"></div>
+    <div class="grid grid-cols-2 gap-3">
+      <div><label class="text-[10px] font-bold text-slate-500">NOME</label><input id="ueNome" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></div>
+      <div><label class="text-[10px] font-bold text-slate-500">SOBRENOME</label><input id="ueSob" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></div>
+    </div>
+    <div><label class="text-[10px] font-bold text-slate-500">EQUIPE</label><select id="ueEquipe" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"><option value="-">Sem equipe</option><option value="Anna">Equipe Anna</option><option value="Didi">Equipe Didi</option></select></div>
+    <div><label class="text-[10px] font-bold text-slate-500">NÍVEL / CARGO</label><select id="ueNivel" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></select></div>
+    <div><label class="text-[10px] font-bold text-slate-500">NOVA SENHA <span class="text-slate-400">(deixe em branco para manter)</span></label><input id="ueSenha" type="password" autocomplete="new-password" class="w-full px-3 py-2 text-sm border rounded bg-slate-50"></div>
+    <div class="flex justify-end gap-2"><button onclick="fechar('mUserEdit')" class="px-4 py-2 text-sm font-bold text-slate-500">Cancelar</button><button id="btnSalvarUser" onclick="salvarUsuario()" class="px-4 py-2 text-sm font-bold bg-orange-500 hover:bg-orange-600 text-white rounded">Salvar</button></div>
   </div>
 </div>
 
@@ -147,11 +181,13 @@ function irParaViagens() {
 
 const MESES = ['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO','JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
 const DIAS = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+const NIVEIS = ['Suporte NN','Suporte N1','Suporte N2','Suporte N3','Analista de Suporte - N1','Analista de Suporte N2','Coordenação GS','Gerência GS','Monitor'];
 const RX_GESTAO = /Coordena|Ger[eê]ncia/i;
 const TIPOS_FIXOS = ['Inauguração','Reinauguração','Mudança de status','Pc-á-pc','Impressoras','Networking'];
 const $ = id => document.getElementById(id);
 const esc = v => String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-let user = null, planilhas = [], planId = '', eventos = [], usuarios = [], tecSel = new Set(), busy = 0, lastSig = '', timer = null, tvTimer = null;
+const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+let user = null, planilhas = [], planId = '', eventos = [], usuarios = [], listaUsers = [], tecSel = new Set(), busy = 0, lastSig = '', timer = null, tvTimer = null;
 const isGestao = () => !!user && RX_GESTAO.test(user.nivel || '');
 const isMonitor = () => !!user && /Monitor/i.test(user.nivel || '');
 
@@ -200,15 +236,19 @@ window.onload = () => {
   if (u && t) {
     try { const o = JSON.parse(u); if (/Monitor/i.test(o.nivel || '') || Date.now() - parseInt(t) < SESSAO_MS) { user = o; return iniciar(); } } catch (e) {}
   }
+  $('splash').classList.add('hidden');
   $('authView').classList.remove('hidden');
 };
 let logando = false;
-function loginMsg(html, tipo) {
+// Mensagem de status do login (sempre visível durante a tentativa)
+function showLoginMsg(html, tipo) {
   const cores = { info: 'bg-blue-50 text-blue-700 border border-blue-200', ok: 'bg-emerald-50 text-emerald-700 border border-emerald-200', erro: 'bg-red-50 text-red-700 border border-red-200' };
   const m = $('loginMsg');
-  m.className = 'rounded-lg px-4 py-3 text-sm font-semibold flex items-center gap-2 ' + cores[tipo];
+  m.className = 'rounded-lg px-4 py-3 text-sm font-semibold items-center gap-2 ' + cores[tipo];
+  m.style.display = 'flex';
   m.innerHTML = html;
 }
+function hideLoginMsg() { $('loginMsg').style.display = 'none'; }
 function loginTravar(t) {
   const b = $('btnLogin');
   b.disabled = t; b.classList.toggle('opacity-75', t); b.classList.toggle('cursor-not-allowed', t);
@@ -219,18 +259,19 @@ $('loginForm').addEventListener('submit', async e => {
   e.preventDefault();
   if (logando) return;
   logando = true; loginTravar(true);
-  loginMsg('<i class="fa-solid fa-spinner fa-spin"></i><span>Verificando suas credenciais, aguarde...</span>', 'info');
+  showLoginMsg('<i class="fa-solid fa-spinner fa-spin"></i><span>Verificando suas credenciais, aguarde...</span>', 'info');
+  toast('Tentativa de login enviada. Aguarde...', 'info');
   const r = await post({ action: 'login', login: $('lUser').value.trim(), senha: $('lPass').value });
   if (r && r.success) {
-    loginMsg('<i class="fa-solid fa-circle-check"></i><span>Login realizado! Carregando o dashboard...</span>', 'ok');
+    showLoginMsg('<i class="fa-solid fa-circle-check"></i><span>Login realizado! Carregando o dashboard...</span>', 'ok');
     toast('Login realizado com sucesso!', 'success');
     localStorage.setItem('usuarioAtivo', JSON.stringify(r.user)); localStorage.setItem('loginTimestamp', Date.now().toString());
     user = r.user;
-    await iniciar();
-    logando = false; loginTravar(false); $('loginMsg').classList.add('hidden'); $('lPass').value = '';
+    await iniciar();   // só troca de tela depois que os dados carregaram
+    logando = false; loginTravar(false); hideLoginMsg(); $('lPass').value = '';
   } else {
     const msg = r ? (r.message || 'Usuário ou senha incorretos.') : 'Erro de conexão. Verifique a internet e tente novamente.';
-    loginMsg('<i class="fa-solid fa-triangle-exclamation"></i><span>' + esc(msg) + '</span>', 'erro');
+    showLoginMsg('<i class="fa-solid fa-triangle-exclamation"></i><span>' + esc(msg) + '</span>', 'erro');
     toast(msg, 'error');
     logando = false; loginTravar(false);
   }
@@ -238,13 +279,16 @@ $('loginForm').addEventListener('submit', async e => {
 function logout() { clearInterval(timer); clearInterval(tvTimer); localStorage.removeItem('usuarioAtivo'); localStorage.removeItem('loginTimestamp'); location.reload(); }
 
 async function iniciar() {
-  $('authView').classList.add('hidden'); $('appView').classList.remove('hidden');
   $('uNome').textContent = user.nome + ' ' + user.sobrenome;
   $('sidebar').classList.toggle('hidden', !isGestao());
   $('lnkViagens').classList.toggle('hidden', isGestao() || isMonitor());
-  if (isMonitor()) { document.body.classList.add('tv'); iniciarAutoScroll(); }
   const u = await post({ action: 'getUsers' }); if (u && u.success) usuarios = u.users;
   await carregar();
+  // dados prontos: agora sim troca a tela
+  $('splash').classList.add('hidden');
+  $('authView').classList.add('hidden'); $('appView').classList.remove('hidden');
+  if (isMonitor()) { document.body.classList.add('tv'); iniciarAutoScroll(); }
+  clearInterval(timer);
   timer = setInterval(() => {
     if (!isMonitor() && Date.now() - parseInt(localStorage.getItem('loginTimestamp') || 0) >= SESSAO_MS) return logout();
     if (!document.hidden && busy === 0) carregar();
@@ -395,14 +439,77 @@ async function excluirPlanilha(id) {
   if (r && r.success) { if (planId === id) planId = ''; fechar('mArq'); toast('Calendário excluído.', 'success'); recarregar(); } else toast('Falha ao excluir.', 'error');
 }
 
-// ===== usuário =====
+// ===== criar usuário =====
 function abrirUsuario() { ['uNomeN','uSobN','uSenha'].forEach(i => $(i).value = ''); $('mUser').classList.remove('hidden'); }
+async function atualizarListaUsuariosBase() { const u = await post({ action: 'getUsers' }); if (u && u.success) usuarios = u.users; }
 async function criarUsuario() {
   const d = { action: 'dashCriarUsuario', nivel: user.nivel, nome: $('uNomeN').value, sobrenome: $('uSobN').value, senha: $('uSenha').value, equipe: $('uEquipe').value, nivelNovo: $('uNivel').value };
   if (!d.nome || !d.sobrenome || !d.senha) return toast('Preencha nome, sobrenome e senha.', 'error');
   const r = await post(d);
-  if (r && r.success) { toast('Usuário criado: ' + r.login, 'success'); fechar('mUser'); const u = await post({ action: 'getUsers' }); if (u && u.success) usuarios = u.users; }
+  if (r && r.success) { toast('Usuário criado: ' + r.login, 'success'); fechar('mUser'); atualizarListaUsuariosBase(); }
   else toast((r && r.message) || 'Erro ao criar.', 'error');
+}
+
+// ===== gerenciar usuários (listar / editar) =====
+async function abrirUsuarios() {
+  const sel = $('ueNivel');
+  if (!sel.options.length) sel.innerHTML = NIVEIS.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  $('usBusca').value = '';
+  $('usLista').innerHTML = '<p class="text-sm text-slate-400 text-center py-8"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando usuários...</p>';
+  $('mUsers').classList.remove('hidden');
+  const r = await post({ action: 'dashListarUsuarios', nivel: user.nivel, login: user.login });
+  if (!r || !r.success) {
+    $('usLista').innerHTML = '<p class="text-sm text-red-500 text-center py-8">Não foi possível carregar os usuários.</p>';
+    return toast((r && r.message) || 'Erro ao carregar usuários.', 'error');
+  }
+  listaUsers = r.users;
+  renderUsuarios();
+}
+function renderUsuarios() {
+  const q = norm($('usBusca').value);
+  const l = listaUsers.filter(u => norm(u.nome + ' ' + u.sobrenome + ' ' + u.login + ' ' + u.nivel + ' ' + u.equipe).includes(q))
+    .sort((a, b) => (a.nome + a.sobrenome).localeCompare(b.nome + b.sobrenome));
+  if (!l.length) { $('usLista').innerHTML = '<p class="text-sm text-slate-400 text-center py-8">Nenhum usuário encontrado.</p>'; return; }
+  $('usLista').innerHTML = `<table class="min-w-full text-sm text-left"><thead class="bg-slate-100"><tr>
+    <th class="px-3 py-2 text-[10px] uppercase font-bold text-slate-500">Nome</th>
+    <th class="px-3 py-2 text-[10px] uppercase font-bold text-slate-500">Login</th>
+    <th class="px-3 py-2 text-[10px] uppercase font-bold text-slate-500">Equipe</th>
+    <th class="px-3 py-2 text-[10px] uppercase font-bold text-slate-500">Nível</th>
+    <th class="px-3 py-2"></th></tr></thead><tbody>` +
+    l.map(u => `<tr class="border-b hover:bg-slate-50"><td class="px-3 py-2 font-bold">${esc(u.nome)} ${esc(u.sobrenome)}</td><td class="px-3 py-2 font-mono text-xs text-slate-500">${esc(u.login)}</td><td class="px-3 py-2 text-xs">${esc(u.equipe === '-' || !u.equipe ? 'Sem equipe' : u.equipe)}</td><td class="px-3 py-2 text-xs">${esc(u.nivel)}</td><td class="px-3 py-2 text-right"><button onclick="editarUsuario('${encodeURIComponent(u.login)}')" class="text-slate-400 hover:text-orange-500" title="Editar"><i class="fa-solid fa-pen"></i></button></td></tr>`).join('') +
+    '</tbody></table>';
+}
+function editarUsuario(enc) {
+  const login = decodeURIComponent(enc);
+  const u = listaUsers.find(x => String(x.login).toLowerCase() === login.toLowerCase()); if (!u) return;
+  $('ueLogin').value = u.login; $('ueNome').value = u.nome; $('ueSob').value = u.sobrenome;
+  $('ueEquipe').value = (u.equipe === 'Anna' || u.equipe === 'Didi') ? u.equipe : '-';
+  $('ueNivel').value = NIVEIS.indexOf(u.nivel) !== -1 ? u.nivel : NIVEIS[0];
+  $('ueSenha').value = '';
+  $('mUserEdit').classList.remove('hidden');
+}
+async function salvarUsuario() {
+  const d = { action: 'dashAtualizarUsuario', nivel: user.nivel, solicitante: user.login, login: $('ueLogin').value, nome: $('ueNome').value.trim(), sobrenome: $('ueSob').value.trim(), equipe: $('ueEquipe').value, nivelNovo: $('ueNivel').value, senha: $('ueSenha').value };
+  if (!d.nome || !d.sobrenome) return toast('Informe nome e sobrenome.', 'error');
+  if (d.senha && d.senha.length < 4) return toast('A nova senha deve ter pelo menos 4 caracteres.', 'error');
+  const b = $('btnSalvarUser'); b.disabled = true; b.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i>Salvando...'; busy++;
+  const r = await post(d);
+  busy--; b.disabled = false; b.textContent = 'Salvar';
+  if (r && r.success) {
+    toast('Usuário atualizado.', 'success');
+    fechar('mUserEdit');
+    const i = listaUsers.findIndex(x => String(x.login).toLowerCase() === String(r.user.login).toLowerCase());
+    if (i !== -1) listaUsers[i] = r.user;
+    // se editou a si mesmo, atualiza a sessão
+    if (String(r.user.login).toLowerCase() === String(user.login).toLowerCase()) {
+      user = Object.assign({}, user, r.user);
+      localStorage.setItem('usuarioAtivo', JSON.stringify(user));
+      $('uNome').textContent = user.nome + ' ' + user.sobrenome;
+    }
+    renderUsuarios();
+    await atualizarListaUsuariosBase();
+    recarregar();
+  } else toast((r && r.message) || 'Falha ao salvar.', 'error');
 }
 </script>
 </body>
